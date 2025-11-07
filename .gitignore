@@ -109,8 +109,8 @@ desktop.ini
 *.txt
 *.out
 
-venv/
-data/
+venv
+data
 datasets/
 *.csv
 *.h5
