@@ -1,0 +1,387 @@
+[
+    {
+        "label": "os",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "os",
+        "description": "os",
+        "detail": "os",
+        "documentation": {}
+    },
+    {
+        "label": "optuna",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "optuna",
+        "description": "optuna",
+        "detail": "optuna",
+        "documentation": {}
+    },
+    {
+        "label": "torch",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "torch",
+        "description": "torch",
+        "detail": "torch",
+        "documentation": {}
+    },
+    {
+        "label": "torch.nn",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "torch.nn",
+        "description": "torch.nn",
+        "detail": "torch.nn",
+        "documentation": {}
+    },
+    {
+        "label": "torch.optim",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "torch.optim",
+        "description": "torch.optim",
+        "detail": "torch.optim",
+        "documentation": {}
+    },
+    {
+        "label": "torch.nn.functional",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "torch.nn.functional",
+        "description": "torch.nn.functional",
+        "detail": "torch.nn.functional",
+        "documentation": {}
+    },
+    {
+        "label": "TensorDataset",
+        "importPath": "torch.utils.data",
+        "description": "torch.utils.data",
+        "isExtraImport": true,
+        "detail": "torch.utils.data",
+        "documentation": {}
+    },
+    {
+        "label": "DataLoader",
+        "importPath": "torch.utils.data",
+        "description": "torch.utils.data",
+        "isExtraImport": true,
+        "detail": "torch.utils.data",
+        "documentation": {}
+    },
+    {
+        "label": "random_split",
+        "importPath": "torch.utils.data",
+        "description": "torch.utils.data",
+        "isExtraImport": true,
+        "detail": "torch.utils.data",
+        "documentation": {}
+    },
+    {
+        "label": "numpy",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "numpy",
+        "description": "numpy",
+        "detail": "numpy",
+        "documentation": {}
+    },
+    {
+        "label": "matplotlib.pyplot",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "matplotlib.pyplot",
+        "description": "matplotlib.pyplot",
+        "detail": "matplotlib.pyplot",
+        "documentation": {}
+    },
+    {
+        "label": "FileSystemArtifactStore",
+        "importPath": "optuna.artifacts",
+        "description": "optuna.artifacts",
+        "isExtraImport": true,
+        "detail": "optuna.artifacts",
+        "documentation": {}
+    },
+    {
+        "label": "argparse",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "argparse",
+        "description": "argparse",
+        "detail": "argparse",
+        "documentation": {}
+    },
+    {
+        "label": "Parallel",
+        "importPath": "joblib",
+        "description": "joblib",
+        "isExtraImport": true,
+        "detail": "joblib",
+        "documentation": {}
+    },
+    {
+        "label": "delayed",
+        "importPath": "joblib",
+        "description": "joblib",
+        "isExtraImport": true,
+        "detail": "joblib",
+        "documentation": {}
+    },
+    {
+        "label": "parallel_backend",
+        "importPath": "joblib",
+        "description": "joblib",
+        "isExtraImport": true,
+        "detail": "joblib",
+        "documentation": {}
+    },
+    {
+        "label": "partial",
+        "importPath": "functools",
+        "description": "functools",
+        "isExtraImport": true,
+        "detail": "functools",
+        "documentation": {}
+    },
+    {
+        "label": "sys",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "sys",
+        "description": "sys",
+        "detail": "sys",
+        "documentation": {}
+    },
+    {
+        "label": "*",
+        "importPath": "structures",
+        "description": "structures",
+        "isExtraImport": true,
+        "detail": "structures",
+        "documentation": {}
+    },
+    {
+        "label": "*",
+        "importPath": "losses",
+        "description": "losses",
+        "isExtraImport": true,
+        "detail": "losses",
+        "documentation": {}
+    },
+    {
+        "label": "*",
+        "importPath": "trainer",
+        "description": "trainer",
+        "isExtraImport": true,
+        "detail": "trainer",
+        "documentation": {}
+    },
+    {
+        "label": "Optimization",
+        "kind": 6,
+        "importPath": "optuna.main",
+        "description": "optuna.main",
+        "peekOfCode": "class Optimization():\n    # Objective function for Optuna\n    big_number = 1e5\n    def __init__(self, study_name, storage_name, load_if_exists=True,\n                 directions=\"minimize\"):\n        self.study_name     = study_name\n        self.storage_name   = storage_name\n        self.load_if_exists = load_if_exists\n        self.base_lr        = 1e-9 #base_lr\n        self.directions     = directions",
+        "detail": "optuna.main",
+        "documentation": {}
+    },
+    {
+        "label": "get_dataset",
+        "kind": 2,
+        "importPath": "optuna.main",
+        "description": "optuna.main",
+        "peekOfCode": "def get_dataset(device):\n    # Example unsupervised data: 100 samples with 10 features each\n    data = np.load(\"../data/three_body_train_data.npy\")\n    num_samples = data.shape[0]\n    num_samples_start = int(data.shape[0]*0.9)\n    #num_samples_start = 0\n    num_samples_end   = data.shape[0]\n    num_samples = num_samples_end - num_samples_start\n    num_features = data.shape[1]\n    # Placeholder for input (magnitudes of velocities and accelerations)",
+        "detail": "optuna.main",
+        "documentation": {}
+    },
+    {
+        "label": "dtype",
+        "kind": 5,
+        "importPath": "optuna.main",
+        "description": "optuna.main",
+        "peekOfCode": "dtype = torch.double\ntorch.set_default_dtype(dtype)\n#torch.autograd.set_detect_anomaly(True)\n# Set the device to CUDA if available, otherwise CPU\n# Constants\nBATCHSIZE = 32\nEPOCHS = 10\nTargetEnergyError = 1e-2\nDIR = os.getcwd()\n#print(\"Using device:\", DEVICE)",
+        "detail": "optuna.main",
+        "documentation": {}
+    },
+    {
+        "label": "BATCHSIZE",
+        "kind": 5,
+        "importPath": "optuna.main",
+        "description": "optuna.main",
+        "peekOfCode": "BATCHSIZE = 32\nEPOCHS = 10\nTargetEnergyError = 1e-2\nDIR = os.getcwd()\n#print(\"Using device:\", DEVICE)\n# Define the base path for storing artifacts\nartifact_base_path = \"../data/optuna/artifacts\"\nos.makedirs(artifact_base_path, exist_ok=True)\n# Initialize the artifact store\nartifact_store = FileSystemArtifactStore(base_path=artifact_base_path)",
+        "detail": "optuna.main",
+        "documentation": {}
+    },
+    {
+        "label": "EPOCHS",
+        "kind": 5,
+        "importPath": "optuna.main",
+        "description": "optuna.main",
+        "peekOfCode": "EPOCHS = 10\nTargetEnergyError = 1e-2\nDIR = os.getcwd()\n#print(\"Using device:\", DEVICE)\n# Define the base path for storing artifacts\nartifact_base_path = \"../data/optuna/artifacts\"\nos.makedirs(artifact_base_path, exist_ok=True)\n# Initialize the artifact store\nartifact_store = FileSystemArtifactStore(base_path=artifact_base_path)\ndef get_dataset(device):",
+        "detail": "optuna.main",
+        "documentation": {}
+    },
+    {
+        "label": "TargetEnergyError",
+        "kind": 5,
+        "importPath": "optuna.main",
+        "description": "optuna.main",
+        "peekOfCode": "TargetEnergyError = 1e-2\nDIR = os.getcwd()\n#print(\"Using device:\", DEVICE)\n# Define the base path for storing artifacts\nartifact_base_path = \"../data/optuna/artifacts\"\nos.makedirs(artifact_base_path, exist_ok=True)\n# Initialize the artifact store\nartifact_store = FileSystemArtifactStore(base_path=artifact_base_path)\ndef get_dataset(device):\n    # Example unsupervised data: 100 samples with 10 features each",
+        "detail": "optuna.main",
+        "documentation": {}
+    },
+    {
+        "label": "DIR",
+        "kind": 5,
+        "importPath": "optuna.main",
+        "description": "optuna.main",
+        "peekOfCode": "DIR = os.getcwd()\n#print(\"Using device:\", DEVICE)\n# Define the base path for storing artifacts\nartifact_base_path = \"../data/optuna/artifacts\"\nos.makedirs(artifact_base_path, exist_ok=True)\n# Initialize the artifact store\nartifact_store = FileSystemArtifactStore(base_path=artifact_base_path)\ndef get_dataset(device):\n    # Example unsupervised data: 100 samples with 10 features each\n    data = np.load(\"../data/three_body_train_data.npy\")",
+        "detail": "optuna.main",
+        "documentation": {}
+    },
+    {
+        "label": "artifact_base_path",
+        "kind": 5,
+        "importPath": "optuna.main",
+        "description": "optuna.main",
+        "peekOfCode": "artifact_base_path = \"../data/optuna/artifacts\"\nos.makedirs(artifact_base_path, exist_ok=True)\n# Initialize the artifact store\nartifact_store = FileSystemArtifactStore(base_path=artifact_base_path)\ndef get_dataset(device):\n    # Example unsupervised data: 100 samples with 10 features each\n    data = np.load(\"../data/three_body_train_data.npy\")\n    num_samples = data.shape[0]\n    num_samples_start = int(data.shape[0]*0.9)\n    #num_samples_start = 0",
+        "detail": "optuna.main",
+        "documentation": {}
+    },
+    {
+        "label": "artifact_store",
+        "kind": 5,
+        "importPath": "optuna.main",
+        "description": "optuna.main",
+        "peekOfCode": "artifact_store = FileSystemArtifactStore(base_path=artifact_base_path)\ndef get_dataset(device):\n    # Example unsupervised data: 100 samples with 10 features each\n    data = np.load(\"../data/three_body_train_data.npy\")\n    num_samples = data.shape[0]\n    num_samples_start = int(data.shape[0]*0.9)\n    #num_samples_start = 0\n    num_samples_end   = data.shape[0]\n    num_samples = num_samples_end - num_samples_start\n    num_features = data.shape[1]",
+        "detail": "optuna.main",
+        "documentation": {}
+    },
+    {
+        "label": "CustomizableLoss2D",
+        "kind": 6,
+        "importPath": "src.losses",
+        "description": "src.losses",
+        "peekOfCode": "class CustomizableLoss2D(nn.Module):\n    Dim = 2\n    def __init__(self, nParticle=2, nAttribute=13, nBatch=32, alpha=0.1, beta=0.1, gamma=0.10, TargetEnergyError=1e-8, \n                data_min=None, data_max=None, device='cpu'):\n        \"\"\"\n        mse_weight: weight for the mean squared error component\n        mae_weight: weight for the mean absolute error component\n        \"\"\"\n        super(CustomizableLoss3D, self).__init__()\n        self.alpha = alpha",
+        "detail": "src.losses",
+        "documentation": {}
+    },
+    {
+        "label": "CustomizableLoss3D",
+        "kind": 6,
+        "importPath": "src.losses",
+        "description": "src.losses",
+        "peekOfCode": "class CustomizableLoss3D(nn.Module):\n    Dim = 3\n    def __init__(self, nParticle=3, nAttribute=20, nBatch=32, alpha=0.1, beta=0.1, gamma=0.10, TargetEnergyError=1e-8, \n                data_min=None, data_max=None, device='cpu'):\n        \"\"\"\n        mse_weight: weight for the mean squared error component\n        mae_weight: weight for the mean absolute error component\n        \"\"\"\n        super(CustomizableLoss3D, self).__init__()\n        self.alpha = alpha",
+        "detail": "src.losses",
+        "documentation": {}
+    },
+    {
+        "label": "CustomizableLoss3DM",
+        "kind": 6,
+        "importPath": "src.losses",
+        "description": "src.losses",
+        "peekOfCode": "class CustomizableLoss3DM(nn.Module):\n    Dim = 3\n    def __init__(self, nParticle=3, nAttribute=20, nBatch=32, alpha=0.1, beta=0.1, gamma=0.10, TargetEnergyError=1e-8, \n                data_min=None, data_max=None, device='cpu'):\n        super(CustomizableLoss3DM, self).__init__()\n        self.alpha = alpha\n        self.beta  = beta\n        self.gamma = gamma\n        self.TargetEnergyError = TargetEnergyError\n        self.device=device",
+        "detail": "src.losses",
+        "documentation": {}
+    },
+    {
+        "label": "float_info",
+        "kind": 5,
+        "importPath": "src.losses",
+        "description": "src.losses",
+        "peekOfCode": "float_info = torch.finfo(torch.float)\ndouble_info = torch.finfo(torch.double)\ndouble_tiny = double_info.tiny\nfloat_tiny = float_info.tiny\neps = float_tiny\n# Customizable loss function combining MSE and MAE\nclass CustomizableLoss2D(nn.Module):\n    Dim = 2\n    def __init__(self, nParticle=2, nAttribute=13, nBatch=32, alpha=0.1, beta=0.1, gamma=0.10, TargetEnergyError=1e-8, \n                data_min=None, data_max=None, device='cpu'):",
+        "detail": "src.losses",
+        "documentation": {}
+    },
+    {
+        "label": "double_info",
+        "kind": 5,
+        "importPath": "src.losses",
+        "description": "src.losses",
+        "peekOfCode": "double_info = torch.finfo(torch.double)\ndouble_tiny = double_info.tiny\nfloat_tiny = float_info.tiny\neps = float_tiny\n# Customizable loss function combining MSE and MAE\nclass CustomizableLoss2D(nn.Module):\n    Dim = 2\n    def __init__(self, nParticle=2, nAttribute=13, nBatch=32, alpha=0.1, beta=0.1, gamma=0.10, TargetEnergyError=1e-8, \n                data_min=None, data_max=None, device='cpu'):\n        \"\"\"",
+        "detail": "src.losses",
+        "documentation": {}
+    },
+    {
+        "label": "double_tiny",
+        "kind": 5,
+        "importPath": "src.losses",
+        "description": "src.losses",
+        "peekOfCode": "double_tiny = double_info.tiny\nfloat_tiny = float_info.tiny\neps = float_tiny\n# Customizable loss function combining MSE and MAE\nclass CustomizableLoss2D(nn.Module):\n    Dim = 2\n    def __init__(self, nParticle=2, nAttribute=13, nBatch=32, alpha=0.1, beta=0.1, gamma=0.10, TargetEnergyError=1e-8, \n                data_min=None, data_max=None, device='cpu'):\n        \"\"\"\n        mse_weight: weight for the mean squared error component",
+        "detail": "src.losses",
+        "documentation": {}
+    },
+    {
+        "label": "float_tiny",
+        "kind": 5,
+        "importPath": "src.losses",
+        "description": "src.losses",
+        "peekOfCode": "float_tiny = float_info.tiny\neps = float_tiny\n# Customizable loss function combining MSE and MAE\nclass CustomizableLoss2D(nn.Module):\n    Dim = 2\n    def __init__(self, nParticle=2, nAttribute=13, nBatch=32, alpha=0.1, beta=0.1, gamma=0.10, TargetEnergyError=1e-8, \n                data_min=None, data_max=None, device='cpu'):\n        \"\"\"\n        mse_weight: weight for the mean squared error component\n        mae_weight: weight for the mean absolute error component",
+        "detail": "src.losses",
+        "documentation": {}
+    },
+    {
+        "label": "eps",
+        "kind": 5,
+        "importPath": "src.losses",
+        "description": "src.losses",
+        "peekOfCode": "eps = float_tiny\n# Customizable loss function combining MSE and MAE\nclass CustomizableLoss2D(nn.Module):\n    Dim = 2\n    def __init__(self, nParticle=2, nAttribute=13, nBatch=32, alpha=0.1, beta=0.1, gamma=0.10, TargetEnergyError=1e-8, \n                data_min=None, data_max=None, device='cpu'):\n        \"\"\"\n        mse_weight: weight for the mean squared error component\n        mae_weight: weight for the mean absolute error component\n        \"\"\"",
+        "detail": "src.losses",
+        "documentation": {}
+    },
+    {
+        "label": "SimpleNN",
+        "kind": 6,
+        "importPath": "src.structures",
+        "description": "src.structures",
+        "peekOfCode": "class SimpleNN(nn.Module):\n    def __init__(self, input_size, hidden_size, output_size):\n        super(SimpleNN, self).__init__()\n        # First fully connected layer\n        self.fc1 = nn.Linear(input_size, hidden_size)\n        # Activation function\n        self.relu1 = nn.ReLU()\n        # Second fully connected layer (output layer)\n        self.fc2 = nn.Linear(hidden_size, output_size)\n        #self.sigmoid = nn.Sigmoid()",
+        "detail": "src.structures",
+        "documentation": {}
+    },
+    {
+        "label": "FullyConnectedNN",
+        "kind": 6,
+        "importPath": "src.structures",
+        "description": "src.structures",
+        "peekOfCode": "class FullyConnectedNN(nn.Module):\n    def __init__(self, input_dim, output_dim, hidden_dims=[64, 64], activation='relu', dropout=0.0, output_positive=True):\n        \"\"\"\n        Initializes the fully connected network.\n        Parameters:\n            input_dim (int): Number of input features.\n            output_dim (int): Number of output features.\n            hidden_dims (list of int): Sizes of hidden layers. Default is [64, 64].\n            activation (str): Activation function to use. Options: 'relu', 'tanh', or 'sigmoid'. Default is 'relu'.\n            dropout (float): Dropout probability (0.0 means no dropout). Default is 0.0.",
+        "detail": "src.structures",
+        "documentation": {}
+    },
+    {
+        "label": "train_one_epoch_deepspeed",
+        "kind": 2,
+        "importPath": "src.trainer",
+        "description": "src.trainer",
+        "peekOfCode": "def train_one_epoch_deepspeed(model_engine, optimizer, criterion, train_loader, input_mask, weights=None, device='cuda'):\n    model_engine.train()\n    result={\"train_loss\":0., \"energy_error\":0., \"energy_error_fiducial\":0., \"time_step\":0., \"time_step_fiducial\":0.,\n            \"time_step_relative_error\":0.,\"time_step_MSE\":0.}\n    N = 0\n    for batch_idx, (X,) in enumerate(train_loader):\n        #optimizer.zero_grad()       # Clear gradients\n        #print(X.shape)\n        #print(X[:,:12].shape)\n        output = model_engine(X[:,input_mask])          # Forward pass",
+        "detail": "src.trainer",
+        "documentation": {}
+    },
+    {
+        "label": "validate_deepspeed",
+        "kind": 2,
+        "importPath": "src.trainer",
+        "description": "src.trainer",
+        "peekOfCode": "def validate_deepspeed(model_engine, criterion, val_loader, input_mask, weights=None, device='cuda'):\n    # Evaluate on the test set\n    model_engine.eval()\n    result={\"val_loss\":0., \"energy_error\":0., \"energy_error_fiducial\":0.,\n            \"time_step\":0., \"time_step_fiducial\":0., \"time_step_std\":0., \"time_step_fiducial_std\":0.,\n            \"time_step_relative_error\":0,\"time_step_MSE\":0.,}\n    N = 0\n    energy_error_fiducial = 0.0\n    #energy_error_std = 0.0\n    #energy_error_fiducial_std = 0.0",
+        "detail": "src.trainer",
+        "documentation": {}
+    },
+    {
+        "label": "train_one_epoch",
+        "kind": 2,
+        "importPath": "src.trainer",
+        "description": "src.trainer",
+        "peekOfCode": "def train_one_epoch(model, optimizer, criterion, train_loader, input_mask, weights=None, device='cuda'):\n    model.train()\n    train_loss = 0.0\n    energy_loss = 0.0\n    for batch_idx, (X,) in enumerate(train_loader):\n        optimizer.zero_grad()       # Clear gradients\n        #print(X.shape)\n        #print(X[:,:12].shape)\n        output = model(X[:,input_mask])          # Forward pass\n        #print(output)",
+        "detail": "src.trainer",
+        "documentation": {}
+    },
+    {
+        "label": "validate",
+        "kind": 2,
+        "importPath": "src.trainer",
+        "description": "src.trainer",
+        "peekOfCode": "def validate(model, criterion, val_loader, input_mask, weights=None, device='cuda'):\n    # Evaluate on the test set\n    model.eval()\n    test_loss = 0.0\n    energy_error = 0.0\n    energy_error_fiducial = 0.0\n    energy_error_std = 0.0\n    energy_error_fiducial_std = 0.0\n    energy_pred = 0.\n    energy_init = 0.",
+        "detail": "src.trainer",
+        "documentation": {}
+    }
+]
