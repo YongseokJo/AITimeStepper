@@ -1,0 +1,138 @@
+# =========================================
+# Core Python
+# =========================================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Compiled extensions
+*.so
+*.pyd
+*.dll
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Package build / distribution
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Logs and debug
+*.log
+*.out
+*.err
+logs/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Profiling
+.prof
+.profraw
+
+# =========================================
+# Jupyter Notebooks
+# =========================================
+.ipynb_checkpoints/
+jupyter_cache/
+.jupyter/
+**/.ipynb_checkpoints
+*/.ipynb_checkpoints/
+
+# Notebook metadata / temp files
+*.nbconvert.ipynb
+*.nbconvert.html
+*.nbconvert.json
+
+# =========================================
+# Editors / IDEs
+# =========================================
+.vscode/
+.idea/
+.spyderproject
+.spyproject
+*.sublime-project
+*.sublime-workspace
+
+# =========================================
+# OS / System files
+# =========================================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# =========================================
+# Data / Artifacts (optional – uncomment if needed)
+# =========================================
+*.db
+*.zip
+*.png
+*.txt
+*.out
+
+venv/
+data/
+datasets/
+*.csv
+*.h5
+*.npz
+*.pkl
+*.parquet
+
+# =========================================
+# Environments / notebooks / experiments
+# =========================================
+.ipynb_checkpoints/
+.mlflow/
+wandb/
+tensorboard/
+runs/
+notebooks/.ipynb_checkpoints
+
+# =========================================
+# rclone / credentials / custom ignores
+# =========================================
+rclone.conf
+rclone/rclone
+*.gpg
+*.enc
+
