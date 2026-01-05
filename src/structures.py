@@ -47,7 +47,8 @@ class FullyConnectedNN(nn.Module):
         activations = {
             'relu': nn.ReLU,
             'tanh': nn.Tanh,
-            'sigmoid': nn.Sigmoid
+            'sigmoid': nn.Sigmoid,
+            'silu': nn.SiLU
         }
         if activation.lower() not in activations:
             raise ValueError(f"Unsupported activation '{activation}'. Choose from 'relu', 'tanh', or 'sigmoid'.")

@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from pathlib import Path
 #torch.set_default_dtype(torch.float64)
 #torch.set_default_dtype(torch.float32)
 
@@ -165,3 +166,52 @@ def validate(model, criterion, val_loader, input_mask, weights=None, device='cud
     return test_loss, energy_error, energy_error_std, energy_error_fiducial, energy_error_fiducial_std, energy_pred, energy_init, time_step, time_step_fiducial
     
     #print(f"Epoch [{epoch+1}/{num_epochs}], Train Loss: {train_loss:.4e}, Test Loss: {test_loss:.4e}, Energy Loss: {energy_error:.4e}/{energy_error_fiducial:.4e}, Time step: {time_step:.4e}/{time_step_fiducial:.4e}")
+
+
+
+
+def save_checkpoint(
+    path,
+    epoch,
+    model,
+    optimizer,
+    loss,
+    info: dict | None = None,
+    extra: dict | None = None,
+):
+    """
+    Save model/optimizer state + some training diagnostics.
+
+    path   : str or Path to the .pt file
+    epoch  : current epoch (int)
+    model  : nn.Module
+    optimizer : torch.optim.Optimizer
+    loss   : scalar tensor
+    info   : dict of tensors (e.g. your info dict)
+    extra  : any extra metadata you want (hyperparams, etc.)
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Convert info tensors -> Python scalars for convenience
+    if info is not None:
+        info_out = {}
+        for k, v in info.items():
+            if torch.is_tensor(v):
+                # detach just in case
+                info_out[k] = v.detach().cpu().item()
+            else:
+                info_out[k] = v
+    else:
+        info_out = None
+
+    state = {
+        "epoch": epoch,
+        "model_state": model.state_dict(),
+        "optimizer_state": optimizer.state_dict(),
+        "loss": loss.detach().cpu().item(),
+        "info": info_out,
+        "extra": extra,
+    }
+
+    torch.save(state, path)

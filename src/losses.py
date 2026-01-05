@@ -1,10 +1,315 @@
+import math
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 import numpy as np
+from .particle import ParticleTorch
 torch.autograd.set_detect_anomaly(True)
 
 
+
+def loss_fn(model, particle: ParticleTorch):
+    batch = particle.get_batch()
+    params = model(batch)  # (batch, 2)
+    print("params: ", params, "params shape: ", params.shape)
+    dt = params[0]
+    E  = params[1]
+
+    E0 = particle.total_energy(G=1.0)
+    particle.update_dt(dt)
+    particle.get_acceleration()
+    particle.evolve(G=1.0)  # how many periods?
+    E1 = particle.total_energy(G=1.0)
+    print("E0: ", E0, "E1: ", E1, "dt: ", dt, "E: ", E)
+
+    # I have to get both instant energy loss and final energy loss.
+    #while (particle.current_time < particle.period):
+    #    particle.get_acceleration()
+    #    particle.evolve(G=1.0)
+    
+    # Reuse same object, but swap in new tensors
+    # particle.reset_state(pos0, vel0, dt=1e-3)
+    loss = ((E1 - E0)/E0 - 1e-3)**2 - dt**2 + ((E1 - E0)/E0 - E)**2
+
+    return loss
+
+
+def loss_fn_1(model, particle: ParticleTorch, n_steps: int = 1,
+              rel_loss_bound=1e-3, dt_bound=1e-3,
+              lambda_dt=1.0, lambda_pred=1.0,
+              E_lower=1e-8, E_upper=1e-4,
+              return_particle: bool = False):
+    """
+    One forward pass + loss.
+
+    model: maps batch -> [dt_raw, E_hat_raw]
+    particle: a ParticleTorch object with some initial state
+    n_steps: how many integration steps to evolve with the predicted dt.
+    """
+
+    # --- 0. Work on a fresh copy of the particle state ---
+    p = particle.clone_detached()
+
+
+    #print("pre-pos: ", p.position)
+    #print("pre-vel", p.position, p.velocity)
+
+    # --- 1. Build model input ---
+    #batch = p.get_batch()          # shape (2,) for a single system
+    batch = p._get_batch_()
+    batch = batch.unsqueeze(0)     # (1, 2) -> batch dimension
+
+    #print(batch.shape)
+
+    # --- 2. Model predicts raw dt and raw E_hat ---
+    params = model(batch)          # (1, 2)
+    params = params.squeeze(0)     # (2,)
+
+    dt_raw  = params[0]
+    E_hat_raw = F.softplus(params[1])
+    #print(E_hat_raw)
+
+    #print(batch, dt_raw)
+    # ----------------------------------------------------
+    # 2a. Constrain dt and E_hat to be positive & well-behaved
+    # ----------------------------------------------------
+    eps = 1e-12
+    #eps = 1e-6
+
+    dt = dt_raw + eps
+    E_hat = E_hat_raw + eps 
+
+    # --- 3. Initial energy ---
+    E0 = p.total_energy(G=1.0)
+
+    # --- 4. Use predicted dt, evolve for n_steps ---
+    p.update_dt(dt)
+
+
+    #print("pre-pos: ", p.position)
+    #print("pre-vel", p.position, p.velocity)
+    for _ in range(n_steps):
+        p.acceleration = p.get_acceleration(G=1.0)
+        p.evolve(G=1.0)
+
+    #print("post-pos: ", p.position)
+    #print("post-vel: ", p.velocity)
+    E1 = p.total_energy(G=1.0)
+
+    # --- 5. Relative energy change with guards ---
+    # avoid division by 0: add small epsilon relative to |E0|
+    E0_safe = E0 + eps * E0.detach().abs() + eps
+    rel_dE = torch.abs((E1 - E0) / E0_safe)
+    #print(E0, E1, rel_dE, dt)
+
+    # If integrator exploded and we got inf/nan, replace by a large penalty value
+    rel_dE = torch.where(
+        torch.isfinite(rel_dE),
+        rel_dE,
+        torch.full_like(rel_dE, 1.0)
+    )
+
+    # clamp before log to avoid log(0)
+    #rel_dE_safe = rel_dE.clamp(min=eps)
+    rel_dE_safe = rel_dE + eps
+    E_hat_safe  = E_hat.clamp(min=eps)
+
+    # --- 6. Loss components ---
+    # (a) We want rel_dE close to some small rel_loss_bound (both > 0)
+    target_log_rel = math.log(rel_loss_bound)
+    #loss_energy = (torch.log(rel_dE_safe) - target_log_rel) ** 2
+    loss_energy = band_loss_zero_inside_where(torch.log(rel_dE_safe), math.log(E_lower), math.log(E_upper))
+    #print("rel_dE_safe:", torch.log(rel_dE_safe).item(), "target_log_rel:", target_log_rel)
+
+    # (b) We want dt near dt_bound (in log space)
+    #target_log_dt = math.log(dt_bound)
+    #loss_dt = (torch.log(dt) - target_log_dt) ** 2
+    loss_dt = -10*dt**2
+    #loss_dt = - dt
+    
+    # (c) We want model’s E_hat to approximate the actual rel_dE
+    loss_pred = (torch.log(rel_dE_safe) - torch.log(E_hat_safe)) ** 2
+
+    loss = loss_energy #+ lambda_dt * loss_dt #+ lambda_pred * loss_pred
+
+    metrics = {
+        "rel_dE": rel_dE,
+        "dt": dt,
+        "E0": E0,
+        "loss_energy": loss_energy,
+        "loss_pred": loss_pred,
+        "loss_dt": loss_dt,
+    }
+    if return_particle:
+        return loss, metrics, p  # p is the *advanced* particle
+    else:
+        return loss, metrics
+
+
+
+def loss_fn_batch(
+    model,
+    particle: "ParticleTorch",   # can be single or batched
+    n_steps: int = 1,
+    rel_loss_bound=1e-3,
+    dt_bound=1e-3,               # not used if you keep the -10*dt**2 version
+    lambda_dt=1.0,
+    lambda_pred=1.0,
+    E_lower=1e-8,
+    E_upper=1e-4, 
+    return_particle: bool = False,
+):
+    """
+    One forward pass + loss.
+
+    model: maps batch -> [dt_raw, E_hat_raw]
+            If batch has shape (B, D), model(batch) has shape (B, 2).
+
+    particle: ParticleTorch object that may represent:
+        - a single system: position shape (2,)
+        - a batch of systems: position shape (B, 2)
+
+    n_steps: how many integration steps to evolve with the predicted dt.
+    """
+
+    # --- 0. Work on a fresh copy of the particle state ---
+    p = particle.clone_detached()
+
+    # --- 1. Build model input ---
+    # p.get_batch() should return:
+    #   (2,) for a single system  -> we add batch dim
+    #   (B, 2) for batched input  -> we keep as is
+    #batch = p._get_batch()
+    batch = p._get_batch_()
+    if batch.dim() == 1:
+        # (2,) -> (1, 2)
+        batch = batch.unsqueeze(0)
+
+    # --- 2. Model predicts raw dt and raw E_hat ---
+    params = model(batch)  # (B, 2) or (1, 2)
+    if params.dim() == 1:
+        # (2,) -> (1, 2) for safety
+        params = params.unsqueeze(0)
+
+    # params: (B, 2)
+    dt_raw     = params[:, 0]           # (B,)
+    E_hat_raw  = F.softplus(params[:, 1])  # (B,)
+
+    # ----------------------------------------------------
+    # 2a. Constrain dt and E_hat to be positive & well-behaved
+    # ----------------------------------------------------
+    eps = 1e-12
+
+    dt    = dt_raw  + eps              # (B,)
+    E_hat = E_hat_raw + eps            # (B,)
+
+    # --- 3. Initial energy ---
+    # Expecting total_energy to return scalar for single system,
+    # or shape (B,) for batched systems.
+    E0 = p.total_energy_batch(G=1.0)
+    if E0.dim() == 0:
+        E0 = E0.unsqueeze(0)           # make it (1,) for consistency
+
+    # --- 4. Use predicted dt, evolve for n_steps ---
+    # ParticleTorch.update_dt should support dt with shape (B,) or (1,)
+    p.update_dt(dt)
+
+    E_list = [E0]   # store energies
+
+    for _ in range(n_steps):
+        p.acceleration = p.get_acceleration(G=1.0)
+        p.evolve_batch(G=1.0)
+
+        Ei = p.total_energy_batch(G=1.0)
+        if Ei.dim() == 0:
+            Ei = Ei.unsqueeze(0)
+        E_list.append(Ei)
+
+    # now E_list is length n_steps+1, each element shape (B,)
+    E_all = torch.stack(E_list, dim=0)  # (n_steps+1, B)
+
+    # use mean energy difference (can choose max or last)
+    E_mean = E_all.mean(dim=0)  # (B,)
+    E1 = E_all[1]              # (B,)
+    E_last = E_all[-1]              # (B,)
+
+    # Relative energy error using mean:
+    E0_safe = E0 + eps * E0.detach().abs() + eps
+    rel_dE_mean = torch.abs((E_mean - E0) / E0_safe)  # (B,)
+    rel_dE_next = torch.abs((E1 - E0) / E0_safe)      # (B,)
+    rel_dE_last = torch.abs((E_last - E0) / E0_safe)      # (B,)
+    rel_dE_max = torch.abs((E_all - E0) / E0_safe).max(dim=0).values
+
+    rel_dE = rel_dE_mean  # choose which one to use
+
+
+    # Replace inf/nan by a large penalty
+    rel_dE = torch.where(
+        torch.isfinite(rel_dE),
+        rel_dE,
+        torch.full_like(rel_dE, 1.0)
+    )
+
+    rel_dE_safe = rel_dE + eps               # (B,)
+    E_hat_safe  = E_hat.clamp(min=eps)       # (B,)
+
+    # --- 6. Loss components (vectorized over batch) ---
+    # (a) We want rel_dE close to rel_loss_bound (both > 0)
+    target_log_rel = math.log(rel_loss_bound)
+    #loss_energy = (torch.log(rel_dE_safe) - target_log_rel) ** 2   # (B,)
+    #loss_energy = band_loss_zero_inside_where(torch.log(rel_dE_safe), math.log(E_lower), math.log(E_upper))
+    loss_energy_mean = band_loss_zero_inside_where(torch.log(rel_dE_mean), math.log(E_lower), math.log(E_upper))
+    loss_energy_last = band_loss_zero_inside_where(torch.log(rel_dE_last), math.log(E_lower), math.log(E_upper))
+    loss_energy_next = band_loss_zero_inside_where(torch.log(rel_dE_next), math.log(E_lower), math.log(E_upper))
+    loss_energy_max = band_loss_zero_inside_where(torch.log(rel_dE_max), math.log(E_lower), math.log(E_upper))
+    loss_energy = loss_energy_mean.mean() + loss_energy_last.mean() + loss_energy_max.mean() + loss_energy_next.mean()
+
+    # (b) dt regularization — still per-sample
+    #target_log_dt = math.log(dt_bound)
+    #loss_dt = (torch.log(dt) - target_log_dt) ** 2
+    loss_dt = dt                                        # (B,)
+    #loss_dt = -dt
+
+    # (c) We want E_hat to approximate rel_dE in log-space
+    loss_pred = (torch.log(rel_dE_safe) - torch.log(E_hat_safe)) ** 2  # (B,)
+
+    # Final scalar loss: average (or sum) over the batch
+    #loss = loss_energy.mean()  # + lambda_dt * loss_dt.mean() + lambda_pred * loss_pred.mean()
+    loss = loss_energy
+
+    # --- 7. Metrics (use batch-averaged values so .item() still works) ---
+    metrics = {
+        "rel_dE":       rel_dE.mean(),          # scalar tensor
+        "dt":           dt.mean(),              # scalar tensor
+        "E0":           E0.mean(),           # scalar tensor
+        "loss_energy":  loss_energy.mean(),
+        "loss_energy_mean": loss_energy_mean.mean(),
+        "loss_energy_last": loss_energy_last.mean(),
+        "loss_energy_next": loss_energy_next.mean(),
+        "loss_energy_max":  loss_energy_max.mean(),
+        # relative energy change summaries (exposed for logging)
+        "rel_dE_mean":  rel_dE_mean.mean(),
+        "rel_dE_next":  rel_dE_next.mean(),
+        "rel_dE_last":  rel_dE_last.mean(),
+        "rel_dE_max":   rel_dE_max.mean(),
+        "loss_pred":    loss_pred.mean(),
+        "loss_dt":      loss_dt.mean(),
+        # if you ever want full per-sample arrays:
+         "rel_dE_full": rel_dE,
+        # "dt_full":     dt,
+    }
+
+    if return_particle:
+        return loss, metrics, p  # p now represents batched advanced particle(s)
+    else:
+        return loss, metrics, _
+
+
+def band_loss_zero_inside_where(rel_dE, E_lower, E_upper):
+    loss_below = (E_lower - rel_dE).clamp(min=0)**2
+    loss_above = (rel_dE - E_upper).clamp(min=0)**2
+    return loss_below + loss_above
 
 float_info = torch.finfo(torch.float)
 double_info = torch.finfo(torch.double)
@@ -12,753 +317,6 @@ double_tiny = double_info.tiny
 float_tiny = float_info.tiny
 eps = float_tiny
 
-# Customizable loss function combining MSE and MAE
-class CustomizableLoss2D(nn.Module):
-    Dim = 2
-    def __init__(self, nParticle=2, nAttribute=13, nBatch=32, alpha=0.1, beta=0.1, gamma=0.10, TargetEnergyError=1e-8, 
-                data_min=None, data_max=None, device='cpu'):
-        """
-        mse_weight: weight for the mean squared error component
-        mae_weight: weight for the mean absolute error component
-        """
-        super(CustomizableLoss3D, self).__init__()
-        self.alpha = alpha
-        self.beta  = beta
-        self.gamma = gamma
-        self.TargetEnergyError = TargetEnergyError
-        self.device=device
-        self.data_min = data_min
-        self.data_m2m = data_max-data_min
-        self.nAttribute = nAttribute
-        self.nParticle = nParticle
-        self.nBatch = nBatch
-        self.particle = torch.empty((nBatch, nParticle, nAttribute), requires_grad=True).to(device)
 
-    def forward(self, output, data):
-        self.nBatch = data.shape[0]
-        energy_init = data[:self.nBatch,-2].clone()
-        for i in range(self.nParticle):
-            self.particle[:self.nBatch,i,:] = data[:,self.nAttribute*i:self.nAttribute*(i+1)]*self.data_m2m[0,self.nAttribute*i:self.nAttribute*(i+1)]+self.data_min[0,self.nAttribute*i:self.nAttribute*(i+1)]
-        energy_init2 = self.compute_energy()
-        print("init0=",energy_init,"\ninit1=",energy_init2)
-        print("diff=",energy_init-energy_init2)
-        self.predict_positions(output[:,0].clone())
-        energy_pred = self.compute_energy()
-        print("pred=",energy_pred, "\ndiff=",energy_pred-energy_init)
-        print("pred-init=",energy_pred-energy_init)
-        energy_error = torch.abs((energy_pred - energy_init)/energy_init)
-        energy_loss = torch.mean((energy_error - self.TargetEnergyError)**2)
-        #energy_diff = torch.mean(((energy_pred - energy_init)/energy_init)**2)
-        #energy_loss = torch.mean(energy_diff - self.TargetEnergyError**2)
-        loss = -self.alpha*torch.log(torch.mean(output[:,0]**2))+ self.gamma*torch.log(energy_loss)  #+ self.beta*energy_loss 
-        return loss, {"energy_error": torch.mean(energy_error)}
 
-        
-
-    def predict_positions(self, dt):
-        #print(data.shape)
-        #print(self.particle1.shape)
-        self.new_particle = self.particle.clone()
-        for i in range(self.nParticle):
-            for dim in range(Dim):
-            #print(dt)
-                self.new_particle[:self.nBatch,i,dim] = \
-                    ((self.particle[:self.nBatch,i,Dim*3+dim]*dt/3 + self.particle[:self.nBatch,i,Dim*2+dim])*dt/2 + self.particle[:self.nBatch,i,Dim+dim])*dt\
-                        + self.particle[:self.nBatch,i,dim]
-                self.new_particle[:self.nBatch,i,Dim+dim] =\
-                    (self.particle[:self.nBatch,i,Dim*3+dim]*dt/2 + self.particle[:self.nBatch,i,Dim*2+dim])*dt\
-                        + self.particle[:self.nBatch,i,Dim+dim]
-            #self.particle2[:,dim] = ((self.particle[:,Dim*9+dim]*dt/3 + self.particle[:,Dim*8+dim])*dt/2 + self.particle[:,Dim*7+dim])*dt + self.particle[:,Dim*6+dim]
-            #self.particle2[:,Dim+dim] =  (data[:,Dim*9+dim]*dt/2 + data[:,Dim*8+dim])*dt   + data[:,Dim*7+dim]
-            #print(self.particle1)
-            #print(self.particle2)
-        #self.particle1[:,-1] = data[:,12]
-        #self.particle2[:,-1] = data[:,25]
-        #self.particle = self.new_particle
-
-    def compute_energy(self): 
-        #kinetic_energy   = 0.5 * (self.particle1[:,-1] * torch.norm(self.particle1[:,2:4], p=2, dim=1)**2+self.particle2[:,-1] * torch.norm(self.particle2[:,2:4], p=2, dim=1)**2)
-        kinetic_energy   = 0.5 * torch.sum(self.new_particle[:self.nBatch,:,-1] * torch.norm(self.new_particle[:self.nBatch,:,Dim:Dim*2], p=2, dim=2)**2, dim=1)
-        #print(torch.norm(self.particle[:self.nBatch,:,Dim:Dim*2], p=2, dim=2)**2)
-        #print(self.particle[:self.nBatch,:,-1]*torch.norm(self.particle[:self.nBatch,:,Dim:Dim*2], p=2, dim=2)**2)
-        potential_energy = torch.zeros((self.nBatch,), requires_grad=True).to(self.device)
-        for i in range(self.nParticle):
-            for j in range(i+1,self.nParticle):
-                r = torch.norm(self.new_particle[:self.nBatch,i,:Dim] - self.new_particle[:self.nBatch,j,:Dim], p=2, dim=1)
-                potential_energy -= self.new_particle[:self.nBatch,i,-1] * self.new_particle[:self.nBatch,j,-1] / r
-        #print("kin=",kinetic_energy)
-        #print("pot=",potential_energy)
-        return kinetic_energy + potential_energy
-
-
-    def compute_momentum(self): 
-        momentum = torch.sum(self.new_particle[:self.nBatch,:,-1] * torch.norm(self.new_particle[:self.nBatch,:,Dim:Dim*2], p=2, dim=1))
-        return momemtum ## (samples, dimensions)
-
-class CustomizableLoss3D(nn.Module):
-    Dim = 3
-    def __init__(self, nParticle=3, nAttribute=20, nBatch=32, alpha=0.1, beta=0.1, gamma=0.10, TargetEnergyError=1e-8, 
-                data_min=None, data_max=None, device='cpu'):
-        """
-        mse_weight: weight for the mean squared error component
-        mae_weight: weight for the mean absolute error component
-        """
-        super(CustomizableLoss3D, self).__init__()
-        self.alpha = alpha
-        self.beta  = beta
-        self.gamma = gamma
-        self.TargetEnergyError = TargetEnergyError
-        self.device=device
-        self.data_min = data_min
-        self.data_m2m = data_max-data_min
-        self.nAttribute = nAttribute
-        self.nParticle = nParticle
-        self.nBatch = nBatch
-        self.particle = torch.empty((nBatch, nParticle, nAttribute), requires_grad=True).to(device)
-
-    def forward(self, output, data):
-        self.nBatch = data.shape[0]
-        energy_init = data[:self.nBatch,-1].clone()
-        #print("init=",energy_init)
-        for i in range(self.nParticle):
-            self.particle[:self.nBatch,i,:] = data[:,self.nAttribute*i:self.nAttribute*(i+1)]*self.data_m2m[0,self.nAttribute*i:self.nAttribute*(i+1)]+self.data_min[0,self.nAttribute*i:self.nAttribute*(i+1)]
-        #self.new_particle = self.particle.clone()
-        #energy_init2 = self.compute_energy()
-        #print("init0=",energy_init,"\ninit1=",energy_init2)
-        #print("diff=",energy_init-energy_init2)
-        self.predict_positions(output[:,0].clone())
-        energy_pred = self.compute_energy()
-        #print("pred=",energy_pred, "\ndiff=",energy_pred-energy_init)
-        #print("pred-init=",energy_pred-energy_init)
-        energy_error = torch.abs((energy_pred - energy_init)/energy_init)
-        energy_loss = torch.mean((energy_error - self.TargetEnergyError)**2)
-        #energy_loss2 = torch.mean(torch.log(torch.abs(energy_pred/energy_init)))
-        energy_loss3 = torch.mean((energy_pred - energy_init)**2)
-        #energy_diff = torch.mean(((energy_pred - energy_init)/energy_init)**2)
-        #energy_loss = torch.mean(energy_diff - self.TargetEnergyError**2)
-        loss = -self.alpha*torch.log(torch.mean(output[:,0]**2))+ self.beta*energy_loss3 + self.gamma*torch.log(energy_loss)  # + self.beta*energy_loss2 
-        #print(energy_loss)
-        return loss, {"energy_error": energy_error, "energy_pred": energy_pred, "energy_init": energy_init}
-
-        
-
-    def predict_positions(self, dt):
-        #print(data.shape)
-        #print(self.particle1.shape)
-        self.new_particle = self.particle.clone()
-        for i in range(self.nParticle):
-            for dim in range(self.Dim):
-            #print(dt)
-                self.new_particle[:self.nBatch,i,dim] = \
-                    ((self.particle[:self.nBatch,i,self.Dim*3+dim+1]*dt/3 + self.particle[:self.nBatch,i,self.Dim*2+dim+1])*dt/2 + self.particle[:self.nBatch,i,self.Dim+dim+1])*dt\
-                        + self.particle[:self.nBatch,i,dim+1]
-                self.new_particle[:self.nBatch,i,self.Dim+dim+1] =\
-                    (self.particle[:self.nBatch,i,self.Dim*3+dim+1]*dt/2 + self.particle[:self.nBatch,i,self.Dim*2+dim+1])*dt\
-                        + self.particle[:self.nBatch,i,self.Dim+dim+1]
-            #self.particle2[:,dim] = ((self.particle[:,self.Dim*9+dim]*dt/3 + self.particle[:,self.Dim*8+dim])*dt/2 + self.particle[:,self.Dim*7+dim])*dt + self.particle[:,self.Dim*6+dim]
-            #self.particle2[:,self.Dim+dim] =  (data[:,self.Dim*9+dim]*dt/2 + data[:,self.Dim*8+dim])*dt   + data[:,self.Dim*7+dim]
-            #print(self.particle1)
-            #print(self.particle2)
-        #self.particle1[:,-1] = data[:,12]
-        #self.particle2[:,-1] = data[:,25]
-        #self.particle = self.new_particle
-
-    def compute_energy(self): 
-        #kinetic_energy   = 0.5 * (self.particle1[:,-1] * torch.norm(self.particle1[:,2:4], p=2, dim=1)**2+self.particle2[:,-1] * torch.norm(self.particle2[:,2:4], p=2, dim=1)**2)
-        kinetic_energy   = 0.5 * torch.sum(self.new_particle[:self.nBatch,:,0] * torch.norm(self.new_particle[:self.nBatch,:,self.Dim+1:self.Dim*2+1], p=2, dim=2)**2, dim=1)
-        #print(torch.norm(self.particle[:self.nBatch,:,self.Dim:self.Dim*2], p=2, dim=2)**2)
-        #print(self.particle[:self.nBatch,:,-1]*torch.norm(self.particle[:self.nBatch,:,self.Dim:self.Dim*2], p=2, dim=2)**2)
-        potential_energy = torch.zeros((self.nBatch,), requires_grad=True).to(self.device)
-        for i in range(self.nParticle):
-            for j in range(i+1,self.nParticle):
-                r = torch.norm(self.new_particle[:self.nBatch,i,1:self.Dim+1] - self.new_particle[:self.nBatch,j,1:self.Dim+1], p=2, dim=1)
-                potential_energy -= self.new_particle[:self.nBatch,i,0] * self.new_particle[:self.nBatch,j,0] / r
-        #print("kin=",kinetic_energy)
-        #print("pot=",potential_energy)
-        return kinetic_energy + potential_energy
-
-
-    def compute_momentum(self): 
-        momentum = torch.sum(self.new_particle[:self.nBatch,:,0] * torch.norm(self.new_particle[:self.nBatch,:,self.Dim+1:self.Dim*2+1], p=2, dim=1))
-        return momemtum ## (samples, dimensions)
-
-
-class CustomizableLoss3DM(nn.Module):
-    Dim = 3
-    def __init__(self, nParticle=3, nAttribute=20, nBatch=32, alpha=0.1, beta=0.1, gamma=0.10, TargetEnergyError=1e-8, 
-                data_min=None, data_max=None, input_dim=6, device='cpu'):
-        super(CustomizableLoss3DM, self).__init__()
-        self.alpha = alpha
-        self.beta  = beta
-        self.gamma = gamma
-        self.TargetEnergyError = TargetEnergyError
-        self.device=device
-        self.data_min = data_min
-        self.data_m2m = data_max-data_min
-        self.nAttribute = nAttribute
-        self.nParticle = nParticle
-        self.nBatch = nBatch
-        self.particle = torch.empty((nBatch, nParticle, nAttribute), requires_grad=True).to(device)
-        self.EnergyErrorMax = 1e-8
-        self.EnergyErrorMin = 1e-3
-        self.input_dim = input_dim
-        #self.new_particle = torch.empty((nBatch, nParticle, nAttribute), requires_grad=True).to(device)
-
-
-    def forward(self, model, output, data, weights=None):
-        if weights is not None:
-            self.alpha = weights['time_step']
-            self.beta  = weights['energy_loss']
-            self.gamma = weights['energy_loss']
-    
-    
-        self.nBatch = data.shape[0]
-        #self.TargetEnergyError = data[:,-2]
-        #energy_init = data[:self.nBatch,-1].clone()
-        #print("dt=",torch.mean(output[:,0]))
-        #print("init=",energy_init)
-        for i in range(self.nParticle):
-            self.particle[:self.nBatch,i,:] = data[:,self.input_dim+self.nAttribute*i:self.input_dim+self.nAttribute*(i+1)]
-
-        self.new_particle = self.particle.clone()
-        energy_init = self.compute_total_energy()
-        #print("init=",energy_init)
-        #print("init0=",energy_init,"\ninit1=",energy_init2)
-        #print("diff=",energy_init-energy_init2)
-
-        #print("data=",data[:,1:5])
-        #print("acc=",acc)
-        #print("dt_new=",dt)
-        #print("dt_old=",data[:,25])
-        #dt = torch.pow(10, output[:,0])*dt
-        #dt = torch.pow(10, output[:,0])
-        #print("dt_new=",dt)
-        self.predict_positions(torch.pow(10, output[:self.nBatch,0]))
-
-        energy_pred = self.compute_total_energy()
-
-        energy_error = torch.abs(energy_pred/energy_init-1)
-        #print("energy_error=",energy_error)
-        nan_check = torch.isnan(energy_error)
-        if nan_check.any():
-            print("NaN Found")
-            print("dt=",output[:self.nBatch,0])
-            print("energy_error=",energy_error)
-            raise
-
-        zero_check = energy_error==0
-        if zero_check.any():
-            zero_check = torch.where(energy_error==0)
-            print("zero Found", zero_check)
-            print("dt=",output[zero_check,0])
-            print("energy_error=",energy_error[zero_check])
-            print("energy_init=",energy_init[zero_check])
-            print("energy_pred=",energy_pred[zero_check])
-            energy_error = torch.clamp(energy_error, min=eps)
-
-        """
-            Regions:
-                1. delta1 <= |error| < delta2 : loss = 0
-                2. otherwise                  : loss = (|error|-delta1)(|error|-delta2)
-        """
-
-        if False:
-            energy_loss = (torch.log(energy_error+eps)-np.log(self.EnergyErrorMax))*(torch.log(energy_error+eps)-np.log(self.EnergyErrorMin))
-            #energy_loss = torch.where(energy_loss<=0, eps, energy_loss)
-            energy_loss = torch.where(energy_loss<=0, 0, energy_loss)
-            #print(energy_loss)
-            #print(torch.log(energy_loss))
-            #energy_loss = torch.sum(torch.log(energy_loss))
-        else:
-            energy_loss = (torch.log(energy_error+eps)-np.log(self.EnergyErrorMin))**2
-            #energy_loss = (energy_error-self.EnergyErrorMin)**2
-        #print(energy_loss)
-        energy_loss = torch.mean(energy_loss)
-        #print(energy_loss)
-
-
-
-        if False:
-            l2_loss = 0
-            for param in model.parameters():
-                l2_loss += torch.sum(param ** 2)
-            loss = -self.alpha*torch.mean(torch.log(output[:,0]+eps)) + energy_loss + l2_loss #)/(self.alpha+self.beta+self.gamma)
-        else:
-            loss = -self.alpha*torch.mean(output[:,0]) + energy_loss #+ l2_loss #)/(self.alpha+self.beta+self.gamma)
-            #loss = energy_loss #+ l2_loss #)/(self.alpha+self.beta+self.gamma)
-
-        return loss, {"energy_error": energy_error, "energy_pred": energy_pred, "energy_init": energy_init}
-
-
-
-
-
-        
-
-    def predict_positions(self, dt):
-        """
-        Predict new particle positions and velocities given a time step dt.
-        
-        Args:
-            dt (torch.Tensor): Tensor of shape (nBatch, nParticle) representing the time step for each batch and particle.
-        
-        Assumes self.particle is structured as:
-        - [:, :, 1:Dim+1] -> Position
-        - [:, :, Dim+1:2*Dim+1] -> Velocity
-        - [:, :, 2*Dim+1:3*Dim+1] -> Acceleration
-        - [:, :, 3*Dim+1:4*Dim+1] -> Jerk
-        """
-        # Clone the original particle tensor to update it
-        self.new_particle = self.particle.clone()
-        
-        # Expand dt for broadcasting: from shape [nBatch, nParticle] to [nBatch, nParticle, 1]
-        dt_exp = dt.view(dt.shape[0], 1, 1)
-        
-        # Extract slices (using 1-indexed positions as per your convention)
-        pos  = self.particle[:self.nBatch, :, 1:self.Dim+1]
-        vel  = self.particle[:self.nBatch, :, self.Dim+1:2*self.Dim+1]
-        acc  = self.particle[:self.nBatch, :, 2*self.Dim+1:3*self.Dim+1]
-        jerk = self.particle[:self.nBatch, :, 3*self.Dim+1:4*self.Dim+1]
-        
-        # Compute the new positions and velocities using vectorized operations
-        new_pos = (((jerk * (dt_exp / 3)) + acc) * (dt_exp / 2) + vel) * dt_exp + pos
-        new_vel = ((jerk * (dt_exp / 2)) + acc) * dt_exp + vel
-
-        # Update the corresponding slices in the new particle tensor
-        self.new_particle[:self.nBatch, :, 1:self.Dim+1] = new_pos
-        self.new_particle[:self.nBatch, :, self.Dim+1:2*self.Dim+1] = new_vel
-
-
-
-    def compute_total_energy(self, G=1.0, eps=1e-20):
-        """
-        Compute the total energy (kinetic + gravitational potential) for a batch of particles.
-
-        Assumptions for self.new_particle tensor shape [nBatch, nParticle, 4*Dim+?]:
-            - Index 0 is the mass.
-            - Indices 1:Dim+1 are positions.
-            - Indices Dim+1:2*Dim+1 are velocities.
-        
-        Args:
-            G (float): Gravitational constant.
-            eps (float): A small constant to avoid division by zero.
-        
-        Returns:
-            total_energy (torch.Tensor): Tensor of shape [nBatch] with the total energy for each batch.
-        """
-        # Get device and dimensions
-        nParticle = self.new_particle.shape[1]
-
-        # -----------------------------
-        # 1. Compute Kinetic Energy
-        # -----------------------------
-        # mass: shape [nBatch, nParticle]
-        mass = self.new_particle[:self.nBatch, :, 0]
-        # velocity: shape [nBatch, nParticle, Dim]
-        vel = self.new_particle[:self.nBatch, :, self.Dim+1:2*self.Dim+1]
-        # Compute squared speed without an explicit torch.norm for speed:
-        v2 = (vel ** 2).sum(dim=2)  # shape [nBatch, nParticle]
-        # Kinetic energy for each batch: sum(0.5 * mass * speed^2) over particles
-        kinetic_energy = 0.5 * (mass * v2).sum(dim=1)  # shape [nBatch]
-
-        # -----------------------------
-        # 2. Compute Gravitational Potential Energy
-        # -----------------------------
-        # Positions: shape [nBatch, nParticle, Dim]
-        pos = self.new_particle[:self.nBatch, :, 1:self.Dim+1]
-        # Compute squared norms of positions for each particle (batched):
-        x2 = (pos ** 2).sum(dim=2, keepdim=True)  # shape [nBatch, nParticle, 1]
-        # Compute batched pairwise squared distances:
-        # Using broadcasting: dist2 = ||x_i||^2 + ||x_j||^2 - 2 * (x_i dot x_j)
-        dist2 = x2 + x2.transpose(1, 2) - 2 * torch.bmm(pos, pos.transpose(1, 2))  # shape [nBatch, nParticle, nParticle]
-        dist2 = torch.clamp(dist2, min=eps)  # Avoid negatives or division by zero
-        dist = torch.sqrt(dist2)  # shape [nBatch, nParticle, nParticle]
-
-        # Compute the outer product of masses for each batch
-        # mass: [nBatch, nParticle] -> unsqueeze to [nBatch, nParticle, 1] and [nBatch, 1, nParticle]
-        mass_outer = mass.unsqueeze(2) * mass.unsqueeze(1)  # shape [nBatch, nParticle, nParticle]
-
-        # Compute gravitational potential energy matrix:
-        # U_ij = -G * (m_i * m_j) / r_ij for each pair (i, j)
-        potential_matrix = -G * mass_outer / dist  # shape [nBatch, nParticle, nParticle]
-
-        # Remove self-interactions by zeroing the diagonal for each batch:
-        mask = torch.eye(nParticle, device=self.device, dtype=torch.bool).unsqueeze(0)  # shape [1, nParticle, nParticle]
-        potential_matrix = potential_matrix.masked_fill(mask, 0.0)
-
-        # Since the interaction matrix is symmetric, sum over all elements and divide by 2:
-        potential_energy = 0.5 * potential_matrix.sum(dim=(1, 2))  # shape [nBatch]
-
-        # -----------------------------
-        # 3. Total Energy
-        # -----------------------------
-        total_energy = kinetic_energy + potential_energy  # shape [nBatch]
-        #print("kin=",kinetic_energy)
-        #print("pot=",potential_energy)
-        return total_energy
-
-
-
-    def compute_momentum(self): 
-        momentum = torch.sum(self.new_particle[:self.nBatch,:,0] * torch.norm(self.new_particle[:self.nBatch,:,self.Dim+1:self.Dim*2+1], p=2, dim=1))
-        return momemtum ## (samples, dimensions)
-
-
-
-    def forward_old(self, model, output, data, weights=None):
-        if weights is not None:
-            self.alpha = weights['time_step']
-            self.beta  = weights['energy_loss']
-            self.gamma = weights['energy_loss']
-    
-    
-        self.nBatch = data.shape[0]
-        self.TargetEnergyError = data[:,-2]
-        #energy_init = data[:self.nBatch,-1].clone()
-        #print("dt=",torch.mean(output[:,0]))
-        #print("init=",energy_init)
-        for i in range(self.nParticle):
-            self.particle[:self.nBatch,i,:] = data[:,6+self.nAttribute*i:6+self.nAttribute*(i+1)]
-
-        self.new_particle = self.particle.clone()
-        energy_init = self.compute_total_energy()
-        #print("init=",energy_init)
-        #print("init0=",energy_init,"\ninit1=",energy_init2)
-        #print("diff=",energy_init-energy_init2)
-
-        self.predict_positions(output[:self.nBatch,0])
-
-        energy_pred = self.compute_total_energy()
-        #print("pred=",energy_pred, "\ndiff=",energy_pred-energy_init)
-        #print("pred-init=",energy_pred-energy_init)
-        
-        #energy_init_log = torch.log(np.abs(energy_init))
-        #energy_pred_log = torch.log(np.abs(energy_pred))
-
-        energy_error = torch.abs(energy_pred/energy_init-1)
-        #energy_error = torch.clamp(energy_error, min=eps)
-        #energy_error[energy_error<self.TargetEnergyError] =  self.TargetEnergyError
-        #energy_error = torch.clamp_min(energy_error, self.TargetEnergyError)
-        #print(energy_error)
-        #energy_error = torch.clamp(energy_error, min=self.TargetEnergyError)
-        #energy_loss = torch.sum(torch.log10(energy_error))
-        #print(energy_error)
-        #print(output[:,0], energy_error)
-        #print(torch.mean(energy_error))
-
-        """
-            Regions:
-                1. delta1 <= |error| < delta2 : loss = 0
-                2. otherwise                  : loss = (|error|-delta1)(|error|-delta2)
-        """
-        
-        energy_loss = (torch.log(energy_error+eps)-np.log(self.EnergyErrorMax))*(torch.log(energy_error+eps)-np.log(self.EnergyErrorMin))
-        #energy_loss = torch.where(energy_loss<=0, eps, energy_loss)
-        energy_loss = torch.where(energy_loss<=0, 0, energy_loss)
-        #print(energy_loss)
-        #print(torch.log(energy_loss))
-        #energy_loss = torch.sum(torch.log(energy_loss))
-        energy_loss = torch.mean(energy_loss)
-        #print(energy_loss)
-
-        #energy_loss10 = torch.mean((output[:,1] - torch.log10(energy_error))**2)
-
-        #print(self.TargetEnergyError)
-        #energy_loss = torch.abs(energy_error - self.TargetEnergyError)
-        #energy_loss = torch.where(energy_error > self.TargetEnergyError, torch.abs(energy_error - self.TargetEnergyError), (energy_error - self.TargetEnergyError) ** 4)
-        #energy_loss = torch.log(torch.mean(energy_loss))
-        #energy_loss = torch.mean(torch.log(energy_loss+eps))
-        #print(energy_loss)
-
-        #energy_loss4 = torch.mean((torch.log(energy_error+eps) - np.log(self.TargetEnergyError))**2)
-        #energy_loss4 = torch.mean((torch.log(energy_error+eps) - torch.log(self.TargetEnergyError))**2)
-        #print(energy_loss4)
-
-
-        #energy_loss2 = torch.mean(torch.log(torch.abs(energy_pred/energy_init))**2)
-        #energy_loss2 = torch.mean(torch.log(torch.abs(energy_init/energy_pred))+torch.log(torch.abs(energy_pred/energy_init)))
-        #energy_loss3 = torch.mean((energy_pred - energy_init)**2)
-        #energy_diff = torch.mean(((energy_pred - energy_init)/energy_init)**2)
-        #energy_loss = torch.mean(energy_diff - self.TargetEnergyError**2)
-        #loss = -self.alpha*torch.log(torch.mean(output[:,0]**2))+ self.beta*energy_loss3 + self.gamma*torch.log(energy_loss) + self.beta*energy_loss2 
-        #loss = self.beta*torch.log(energy_loss3+double_tiny) + self.beta*energy_loss2 
-        #loss = -self.alpha*torch.mean(torch.log(output[:,0]+double_tiny)**2) + self.beta*torch.log(energy_loss3) + self.beta*energy_loss2 
-        #loss = -self.alpha*torch.mean(output[:,0]**2) + self.beta*torch.log(energy_loss3+double_tiny) + self.beta*energy_loss2   + self.gamma*torch.log(energy_loss)
-        #loss = -self.alpha*torch.mean(output[:,0]**2) + self.beta*energy_loss2   + self.gamma*torch.log(energy_loss)
-        #loss = -self.alpha*torch.mean(output[:,0]**2)  + self.gamma*torch.log(energy_loss)
-        #loss = (-self.alpha*torch.log(torch.mean(output[:,0]**2))  + self.gamma*torch.log(energy_loss)) #+ self.gamma*energy_loss4)/(self.alpha+self.beta+self.gamma)
-        #loss = -self.alpha*torch.log(torch.mean(output[:,0]**2)) + torch.log(energy_loss) #+ self.gamma*energy_loss4 #)/(self.alpha+self.beta+self.gamma)
-        #loss = torch.log(energy_loss) #+ self.gamma*energy_loss4 #)/(self.alpha+self.beta+self.gamma)
-        #loss = energy_loss #+ self.gamma*energy_loss4 #)/(self.alpha+self.beta+self.gamma)
-        #loss = energy_loss + energy_loss4 +energy_loss10 #)/(self.alpha+self.beta+self.gamma)
-        #loss = -self.alpha*torch.log(torch.mean(output[:,0]**2)) + energy_loss + energy_loss4 +energy_loss10 #)/(self.alpha+self.beta+self.gamma)
-
-        l2_loss = 0
-        for param in model.parameters():
-            l2_loss += torch.sum(param ** 2)
-
-        #loss =  energy_loss + energy_loss4 + energy_loss10 #)/(self.alpha+self.beta+self.gamma)
-        #loss = -self.alpha*torch.log(torch.mean(output[:,0]**2)) + energy_loss + energy_loss4 + energy_loss10 + l2_loss #)/(self.alpha+self.beta+self.gamma)
-        #loss = -self.alpha*torch.log(torch.mean(output[:,0]**2)) + energy_loss + energy_loss10 + l2_loss #)/(self.alpha+self.beta+self.gamma)
-        #loss = -self.alpha*torch.log(torch.mean(output[:,0]**2)) + energy_loss + l2_loss #)/(self.alpha+self.beta+self.gamma)
-        loss = -self.alpha*torch.mean(torch.log(output[:,0]+eps)) + energy_loss + l2_loss #)/(self.alpha+self.beta+self.gamma)
-
-        #loss = energy_loss #+ energy_loss10 #)/(self.alpha+self.beta+self.gamma)
-        #print(output[:,0])
-        #print(energy_error,energy_loss2, energy_loss3)
-        #print(energy_loss)
-        # Compute L2 regularization (squared L2 norm of all parameters)
-
-        return loss, {"energy_error": energy_error, "energy_pred": energy_pred, "energy_init": energy_init}
-
-
-
-
-
-    def forward_old_old(self, output, data):
-        self.nBatch = data.shape[0]
-        energy_init = data[:self.nBatch,-1].clone()
-        #print("init=",energy_init)
-        for i in range(self.nParticle):
-            self.particle[:self.nBatch,i,:] = data[:,6+self.nAttribute*i:6+self.nAttribute*(i+1)]
-        #self.new_particle = self.particle.clone()
-        #energy_init2 = self.compute_energy()
-        #print("init0=",energy_init,"\ninit1=",energy_init2)
-        #print("diff=",energy_init-energy_init2)
-        self.predict_positions(output[:self.nBatch,0])
-        energy_pred = self.compute_energy()
-        #print("pred=",energy_pred, "\ndiff=",energy_pred-energy_init)
-        #print("pred-init=",energy_pred-energy_init)
-        
-
-
-        energy_error = torch.abs((energy_pred - energy_init)/energy_init)
-
-
-        energy_loss = torch.mean((energy_error - self.TargetEnergyError)**2)
-        #energy_loss4 = torch.mean((torch.log(energy_error) - np.log(self.TargetEnergyError))**2)
-        print(energy_loss4)
-
-
-        energy_loss2 = torch.mean(torch.log(torch.abs(energy_pred/energy_init))**2)
-        #energy_loss2 = torch.mean(torch.log(torch.abs(energy_init/energy_pred))+torch.log(torch.abs(energy_pred/energy_init)))
-        energy_loss3 = torch.mean((energy_pred - energy_init)**2)
-        #energy_diff = torch.mean(((energy_pred - energy_init)/energy_init)**2)
-        #energy_loss = torch.mean(energy_diff - self.TargetEnergyError**2)
-        #loss = -self.alpha*torch.log(torch.mean(output[:,0]**2))+ self.beta*energy_loss3 + self.gamma*torch.log(energy_loss) + self.beta*energy_loss2 
-        #loss = self.beta*torch.log(energy_loss3+double_tiny) + self.beta*energy_loss2 
-        #loss = -self.alpha*torch.mean(torch.log(output[:,0]+double_tiny)**2) + self.beta*torch.log(energy_loss3) + self.beta*energy_loss2 
-        #loss = -self.alpha*torch.mean(output[:,0]**2) + self.beta*torch.log(energy_loss3+double_tiny) + self.beta*energy_loss2   + self.gamma*torch.log(energy_loss)
-        #loss = -self.alpha*torch.mean(output[:,0]**2) + self.beta*energy_loss2   + self.gamma*torch.log(energy_loss)
-        #loss = -self.alpha*torch.mean(output[:,0]**2)  + self.gamma*torch.log(energy_loss)
-        loss = -self.alpha*torch.log(torch.mean(output[:,0]**2))  + self.gamma*torch.log(energy_loss) #+ self.gamma*energy_loss4
-        #print(output[:,0])
-        #print(energy_error,energy_loss2, energy_loss3)
-        return loss, {"energy_error": energy_error, "energy_pred": energy_pred, "energy_init": energy_init}
-
-        
-        
-class CustomizableLoss3DMAdjusted(nn.Module):
-    Dim = 3
-    def __init__(self, nParticle=3, nAttribute=20, nBatch=32, alpha=0.1, beta=0.1, gamma=0.10, TargetEnergyError=1e-8, 
-                data_min=None, data_max=None, device='cpu'):
-        super(CustomizableLoss3DMAdjusted, self).__init__()
-        self.alpha = alpha
-        self.beta  = beta
-        self.gamma = gamma
-        self.TargetEnergyError = TargetEnergyError
-        self.device=device
-        self.data_min = data_min
-        self.data_m2m = data_max-data_min
-        self.nAttribute = nAttribute
-        self.nParticle = nParticle
-        self.nBatch = nBatch
-        self.particle = torch.empty((nBatch, nParticle, nAttribute), requires_grad=True).to(device)
-        self.EnergyErrorMax = 1e-9
-        self.EnergyErrorMin = 1e-9
-        #self.new_particle = torch.empty((nBatch, nParticle, nAttribute), requires_grad=True).to(device)
-
-
-    def forward(self, model, output, data, weights=None):
-        if weights is not None:
-            self.alpha = weights['time_step']
-            self.beta  = weights['energy_loss']
-            self.gamma = weights['energy_loss']
-    
-    
-        self.nBatch = data.shape[0]
-        #self.TargetEnergyError = data[:,-2]
-        #energy_init = data[:self.nBatch,-1].clone()
-        #print("dt=",torch.mean(output[:,0]))
-        #print("init=",energy_init)
-        for i in range(self.nParticle):
-            self.particle[:self.nBatch,i,:] = data[:,6+self.nAttribute*i:6+self.nAttribute*(i+1)]
-
-        self.new_particle = self.particle.clone()
-        energy_init = self.compute_total_energy()
-        #print("init=",energy_init)
-        #print("init0=",energy_init,"\ninit1=",energy_init2)
-        #print("diff=",energy_init-energy_init2)
-
-        #print("data=",data[:,1:5])
-        acc = data[:,1:5]*self.data_m2m[:,1:5] + self.data_min[:,1:5]
-        #print("acc=",acc)
-        dt = torch.sqrt((acc[:,0]*acc[:,2]+acc[:,1]**2)/(acc[:,1]*acc[:,3]+acc[:,2]**2))
-        #print("dt_new=",dt)
-        #print("dt_old=",data[:,25])
-        #dt = torch.pow(10, output[:,0])*dt
-        dt = output[:,0]*dt
-        #print("dt_new=",dt)
-        self.predict_positions(dt)
-
-        energy_pred = self.compute_total_energy()
-
-        energy_error = torch.abs(energy_pred/energy_init-1)
-        #print("energy_error=",energy_error)
-
-
-        """
-            Regions:
-                1. delta1 <= |error| < delta2 : loss = 0
-                2. otherwise                  : loss = (|error|-delta1)(|error|-delta2)
-        """
-
-        if False:
-            energy_loss = (torch.log(energy_error+eps)-np.log(self.EnergyErrorMax))*(torch.log(energy_error+eps)-np.log(self.EnergyErrorMin))
-            #energy_loss = torch.where(energy_loss<=0, eps, energy_loss)
-            energy_loss = torch.where(energy_loss<=0, 0, energy_loss)
-            #print(energy_loss)
-            #print(torch.log(energy_loss))
-            #energy_loss = torch.sum(torch.log(energy_loss))
-        else:
-            #energy_loss = (torch.log(energy_error+eps)-np.log(self.EnergyErrorMin))**2
-            energy_loss = (energy_error-self.EnergyErrorMin)**2
-        print(energy_loss)
-        energy_loss = torch.mean(energy_loss)
-        print(energy_loss)
-
-
-
-        if False:
-            l2_loss = 0
-            for param in model.parameters():
-                l2_loss += torch.sum(param ** 2)
-            loss = -self.alpha*torch.mean(torch.log(output[:,0]+eps)) + energy_loss + l2_loss #)/(self.alpha+self.beta+self.gamma)
-        else:
-            #loss = -self.alpha*torch.mean(torch.log(output[:,0]+eps)) + energy_loss #+ l2_loss #)/(self.alpha+self.beta+self.gamma)
-            loss = energy_loss #+ l2_loss #)/(self.alpha+self.beta+self.gamma)
-
-        return loss, {"energy_error": energy_error, "energy_pred": energy_pred, "energy_init": energy_init}
-
-
-
-
-        
-
-    def predict_positions(self, dt):
-        """
-        Predict new particle positions and velocities given a time step dt.
-        
-        Args:
-            dt (torch.Tensor): Tensor of shape (nBatch, nParticle) representing the time step for each batch and particle.
-        
-        Assumes self.particle is structured as:
-        - [:, :, 1:Dim+1] -> Position
-        - [:, :, Dim+1:2*Dim+1] -> Velocity
-        - [:, :, 2*Dim+1:3*Dim+1] -> Acceleration
-        - [:, :, 3*Dim+1:4*Dim+1] -> Jerk
-        """
-        # Clone the original particle tensor to update it
-        self.new_particle = self.particle.clone()
-        
-        # Expand dt for broadcasting: from shape [nBatch, nParticle] to [nBatch, nParticle, 1]
-        dt_exp = dt.view(dt.shape[0], 1, 1)
-        
-        # Extract slices (using 1-indexed positions as per your convention)
-        pos  = self.particle[:self.nBatch, :, 1:self.Dim+1]
-        vel  = self.particle[:self.nBatch, :, self.Dim+1:2*self.Dim+1]
-        acc  = self.particle[:self.nBatch, :, 2*self.Dim+1:3*self.Dim+1]
-        jerk = self.particle[:self.nBatch, :, 3*self.Dim+1:4*self.Dim+1]
-        
-        # Compute the new positions and velocities using vectorized operations
-        new_pos = (((jerk * (dt_exp / 3)) + acc) * (dt_exp / 2) + vel) * dt_exp + pos
-        new_vel = ((jerk * (dt_exp / 2)) + acc) * dt_exp + vel
-
-        # Update the corresponding slices in the new particle tensor
-        self.new_particle[:self.nBatch, :, 1:self.Dim+1] = new_pos
-        self.new_particle[:self.nBatch, :, self.Dim+1:2*self.Dim+1] = new_vel
-
-
-
-    def compute_total_energy(self, G=1.0, eps=1e-20):
-        """
-        Compute the total energy (kinetic + gravitational potential) for a batch of particles.
-
-        Assumptions for self.new_particle tensor shape [nBatch, nParticle, 4*Dim+?]:
-            - Index 0 is the mass.
-            - Indices 1:Dim+1 are positions.
-            - Indices Dim+1:2*Dim+1 are velocities.
-        
-        Args:
-            G (float): Gravitational constant.
-            eps (float): A small constant to avoid division by zero.
-        
-        Returns:
-            total_energy (torch.Tensor): Tensor of shape [nBatch] with the total energy for each batch.
-        """
-        # Get device and dimensions
-        nParticle = self.new_particle.shape[1]
-
-        # -----------------------------
-        # 1. Compute Kinetic Energy
-        # -----------------------------
-        # mass: shape [nBatch, nParticle]
-        mass = self.new_particle[:self.nBatch, :, 0]
-        # velocity: shape [nBatch, nParticle, Dim]
-        vel = self.new_particle[:self.nBatch, :, self.Dim+1:2*self.Dim+1]
-        # Compute squared speed without an explicit torch.norm for speed:
-        v2 = (vel ** 2).sum(dim=2)  # shape [nBatch, nParticle]
-        # Kinetic energy for each batch: sum(0.5 * mass * speed^2) over particles
-        kinetic_energy = 0.5 * (mass * v2).sum(dim=1)  # shape [nBatch]
-
-        # -----------------------------
-        # 2. Compute Gravitational Potential Energy
-        # -----------------------------
-        # Positions: shape [nBatch, nParticle, Dim]
-        pos = self.new_particle[:self.nBatch, :, 1:self.Dim+1]
-        # Compute squared norms of positions for each particle (batched):
-        x2 = (pos ** 2).sum(dim=2, keepdim=True)  # shape [nBatch, nParticle, 1]
-        # Compute batched pairwise squared distances:
-        # Using broadcasting: dist2 = ||x_i||^2 + ||x_j||^2 - 2 * (x_i dot x_j)
-        dist2 = x2 + x2.transpose(1, 2) - 2 * torch.bmm(pos, pos.transpose(1, 2))  # shape [nBatch, nParticle, nParticle]
-        dist2 = torch.clamp(dist2, min=eps)  # Avoid negatives or division by zero
-        dist = torch.sqrt(dist2)  # shape [nBatch, nParticle, nParticle]
-
-        # Compute the outer product of masses for each batch
-        # mass: [nBatch, nParticle] -> unsqueeze to [nBatch, nParticle, 1] and [nBatch, 1, nParticle]
-        mass_outer = mass.unsqueeze(2) * mass.unsqueeze(1)  # shape [nBatch, nParticle, nParticle]
-
-        # Compute gravitational potential energy matrix:
-        # U_ij = -G * (m_i * m_j) / r_ij for each pair (i, j)
-        potential_matrix = -G * mass_outer / dist  # shape [nBatch, nParticle, nParticle]
-
-        # Remove self-interactions by zeroing the diagonal for each batch:
-        mask = torch.eye(nParticle, device=self.device, dtype=torch.bool).unsqueeze(0)  # shape [1, nParticle, nParticle]
-        potential_matrix = potential_matrix.masked_fill(mask, 0.0)
-
-        # Since the interaction matrix is symmetric, sum over all elements and divide by 2:
-        potential_energy = 0.5 * potential_matrix.sum(dim=(1, 2))  # shape [nBatch]
-
-        # -----------------------------
-        # 3. Total Energy
-        # -----------------------------
-        total_energy = kinetic_energy + potential_energy  # shape [nBatch]
-        #print("kin=",kinetic_energy)
-        #print("pot=",potential_energy)
-        return total_energy
-
-
-    def compute_momentum(self): 
-        momentum = torch.sum(self.new_particle[:self.nBatch,:,0] * torch.norm(self.new_particle[:self.nBatch,:,self.Dim+1:self.Dim*2+1], p=2, dim=1))
-        return momemtum ## (samples, dimensions)
 

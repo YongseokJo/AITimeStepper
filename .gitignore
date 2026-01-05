@@ -136,3 +136,8 @@ rclone/rclone
 *.gpg
 *.enc
 
+
+# Custom ignore patterns
+*.swp
+*.last_run_code
+
