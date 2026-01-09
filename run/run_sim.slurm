@@ -4,7 +4,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=1    # <- match to OMP_NUM_THREADS
 #SBATCH --partition=cpu      # <- or one of: gpuA100x4 gpuA40x4 gpuA100x8 gpuMI100x8
-#SBATCH --account=bfpt-delta-cpu    # <- match to a "Project" returned by the "accounts" command
+#SBATCH --account=bgak-delta-cpu    # <- match to a "Project" returned by the "accounts" command
 #SBATCH --job-name=sim
 #SBATCH --time=02:00:00      # hh:mm:ss for the job
 #SBATCH --constraint="scratch"
@@ -48,4 +48,10 @@ echo "job is starting on `hostname`"
 #python3 simulator_test.py --e 0.9 --steps "$step"
 #python3 simulator_test.py --e 0.9 --eps "$eps" --Nperiod 10
 #python3 simulator_test.py --e 0.7 --ML
-python3 simulator_test.py --e 0.9 --ML
+#python3 simulator_test.py --e 0.9 --ML
+
+
+MODEL_PATH="/u/gkerex/projects/AITimeStepper/data/test_history_logs/model/model_epoch_0250.pt"
+
+python simulator_test.py --ML --model-path=$MODEL_PATH --history-len 5 --a=1 --e=0.9 --save-name="history_test_dL"
+

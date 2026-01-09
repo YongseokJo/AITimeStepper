@@ -1,6 +1,8 @@
 import torch
 import numpy as np
 
+from .nbody_features import system_features as nbody_system_features
+
 class ParticleTorch:
     """
     Batched, differentiable particle state for PyTorch.
@@ -63,8 +65,9 @@ class ParticleTorch:
         obj.velocity = velocity
         obj.acceleration = torch.zeros_like(position)
 
-        obj.mass = torch.as_tensor(mass, dtype=torch.double, device=device)
-        obj.dt   = torch.as_tensor(dt,   dtype=torch.double, device=device)
+        dtype = position.dtype
+        obj.mass = torch.as_tensor(mass, dtype=dtype, device=device)
+        obj.dt   = torch.as_tensor(dt,   dtype=dtype, device=device)
 
         obj.softening = float(softening)
         obj.current_time = 0.0
@@ -276,7 +279,7 @@ class ParticleTorch:
         """
         KE = self.kinetic_energy()
 
-        pos = self.position  # (N, 3)
+        pos = self.position  # (N, D)
         m = self.mass        # could be scalar or (N,)
 
         # Pairwise differences
@@ -296,9 +299,18 @@ class ParticleTorch:
         inv_dist = torch.where(eye, torch.zeros_like(dist), 1.0 / dist)
 
         # Potential energy: -G * sum_{i<j} m_i m_j / r_ij
-        # assume scalar mass for now
-        m_i = m if torch.is_tensor(m) else torch.tensor(m, device=pos.device)
-        m_i = m_i.expand(N)
+        # handle scalar or per-particle masses
+        if torch.is_tensor(m):
+            if m.dim() == 0:
+                m_i = m.expand(N)
+            elif m.dim() == 1 and m.shape[0] == N:
+                m_i = m
+            else:
+                m_i = m.reshape(-1)
+                if m_i.shape[0] != N:
+                    raise ValueError(f"mass shape {m.shape} incompatible with position shape {pos.shape}")
+        else:
+            m_i = torch.tensor(m, device=pos.device, dtype=pos.dtype).expand(N)
         m_j = m_i[None, :]
         m_i = m_i[:, None]
 
@@ -403,106 +415,40 @@ class ParticleTorch:
         self.position = self.position + self.velocity * self.dt
         self.current_time += float(self.dt.detach().cpu())
 
+    def system_features(self, G=1.0, mode: str = "basic"):
+        """
+        Fixed-size, permutation-invariant features for an N-body system.
+        mode="basic" or "rich".
+        """
+        return nbody_system_features(
+            position=self.position,
+            velocity=self.velocity,
+            mass=self.mass,
+            softening=self.softening,
+            G=G,
+            mode=mode,
+        )
+
+    def features(self, G=1.0, mode: str = "basic"):
+        """Alias for system_features, kept for simulator compatibility."""
+        return self.system_features(G=G, mode=mode)
+
     def get_batch(self, which_accel=0, G=1.0):
         """
-        Return features for a 2-body system.
-
-        Feature vector includes:
-        [distance, accel_mag, pos0..., pos1..., vel0..., vel1...]
-
-        Output shape (..., F).
+        Backwards-compatible wrapper for rich, N-body features.
+        which_accel is ignored (kept for API compatibility).
         """
-        assert self.position.shape[-2] == 2, "Assumes exactly two particles."
-
-        pos = self.position        # (..., 2, ndim)
-        vel = self.velocity        # (..., 2, ndim)
-
-        ndim = pos.shape[-1]
-
-        # ------------------------------------------------------------------
-        # 1. Distance between the particles
-        # ------------------------------------------------------------------
-        r = pos[..., 1, :] - pos[..., 0, :]
-        dist = torch.linalg.norm(r, dim=-1)   # (...,)
-
-        # ------------------------------------------------------------------
-        # 2. Acceleration magnitude
-        # ------------------------------------------------------------------
-        acc = self.get_acceleration(G=G)      # (..., 2, ndim)
-        a_mag = torch.linalg.norm(acc[..., which_accel, :], dim=-1)
-
-        # ------------------------------------------------------------------
-        # 3. Flatten positions & velocities
-        # ------------------------------------------------------------------
-        # pos: (..., 2, ndim) → (..., 2*ndim)
-        pos_flat = pos.reshape(*pos.shape[:-2], 2*ndim)
-        vel_flat = vel.reshape(*vel.shape[:-2], 2*ndim)
-
-        # ------------------------------------------------------------------
-        # 4. Concatenate all features into one vector
-        # ------------------------------------------------------------------
-        # dist, a_mag → each (...,)
-        base = torch.stack([dist, a_mag], dim=-1)  # (..., 2)
-
-        # final shape: (..., 2 + 2*ndim + 2*ndim)
-        features = torch.cat([base, pos_flat, vel_flat], dim=-1)
-
-        return features
+        _ = which_accel
+        return self.system_features(G=G, mode="rich")
 
 
     def _get_batch_(self, which_accel=0, G=1.0):
         """
-        Build model input for a 2-body system.
-
-        Returns a tensor of shape (..., 2) where the last dimension is:
-          [ distance_between_particles, accel_magnitude_of_chosen_particle ]
-
-        Args
-        ----
-        which_accel : int
-            0 or 1 — which particle's acceleration magnitude to include.
-        G : float
-            Gravitational constant passed to get_acceleration.
-
-        Autograd + GPU friendly:
-          - No in-place ops on tensors that require gradients.
-          - Uses only PyTorch tensor operations.
+        Backwards-compatible wrapper for basic, N-body features.
+        which_accel is ignored (kept for API compatibility).
         """
-        # We assume exactly two particles on the last-but-one axis
-        assert self.position.shape[-2] == 2, \
-            "get_batch currently assumes exactly two particles."
-
-        pos = self.position  # (..., 2, ndim)
-
-        # ------------------------------------------------------------------
-        # 1. Distance between the two particles
-        # ------------------------------------------------------------------
-        # r = x1 - x0
-        r = pos[..., 1, :] - pos[..., 0, :]   # (..., ndim)
-        # |r|
-        dist = torch.linalg.norm(r, dim=-1)   # (...,)
-
-        # ------------------------------------------------------------------
-        # 2. Acceleration magnitude of one particle
-        # ------------------------------------------------------------------
-        # Use stored acceleration if available, otherwise compute it
-        #if hasattr(self, "acceleration") and self.acceleration is not None:
-        #    acc = self.acceleration          # (..., 2, ndim)
-        #else:
-        acc = self.get_acceleration(G=G) # (..., 2, ndim)
-
-        #print(acc)
-        # pick particle 0 or 1
-        a_acc = acc[..., which_accel, :]     # (..., ndim)
-        a_mag = torch.linalg.norm(a_acc, dim=-1)  # (...,)
-
-        # ------------------------------------------------------------------
-        # 3. Stack into feature vector
-        # ------------------------------------------------------------------
-        # shape (..., 2): [distance, accel_magnitude]
-        features = torch.stack([dist, a_mag], dim=-1)
-
-        return features
+        _ = which_accel
+        return self.system_features(G=G, mode="basic")
 
 
     def __getitem__(self, key):
@@ -521,16 +467,23 @@ class ParticleTorch:
 
 def make_particle(ptcls, device, dtype):
     """
-    ptcls: shape (batch, 4) → [x0, y0, vx0, vy0]
+    ptcls: shape (N, 1 + 2*D) -> [m, x..., v...]
     Returns a ParticleTorch whose position/velocity are tied to ptcls.
     """
+    ptcls_t = torch.as_tensor(ptcls, dtype=dtype, device=device)
+    if ptcls_t.dim() != 2:
+        raise ValueError(f"ptcls must be 2D (N, 1+2*D), got {ptcls_t.shape}")
 
-    # build differentiable position/velocity
-    position = torch.stack([ptcls[:,1], ptcls[:,2]], dim=-1).to(device)   # (batch, 2)
-    velocity = torch.stack([ptcls[:,3], ptcls[:,4]], dim=-1).to(device)   # (batch, 2)
+    n_cols = ptcls_t.shape[1]
+    if (n_cols - 1) % 2 != 0:
+        raise ValueError("ptcls must have 1 + 2*D columns ([m, x..., v...])")
+    dim = (n_cols - 1) // 2
+
+    position = ptcls_t[:, 1 : 1 + dim]
+    velocity = ptcls_t[:, 1 + dim : 1 + 2 * dim]
 
     particle = ParticleTorch.from_tensors(
-        mass=torch.tensor(ptcls[:,0], dtype=dtype).to(device),
+        mass=ptcls_t[:, 0],
         position=position,
         velocity=velocity,
     )
@@ -568,8 +521,7 @@ def generate_IC(e=0.,a=1.0):
 
 
 def stack_particles(particles):
-    pos = torch.stack([p.position for p in particles], dim=0)   # (B, 2)
-    vel = torch.stack([p.velocity for p in particles], dim=0)   # (B, 2)
-    mass = torch.stack([p.mass for p in particles], dim=0)      # (B,)
-    # return a new batched ParticleTorch
+    pos = torch.stack([p.position for p in particles], dim=0)   # (B, N, D)
+    vel = torch.stack([p.velocity for p in particles], dim=0)   # (B, N, D)
+    mass = torch.stack([p.mass for p in particles], dim=0)      # (B, N) or (B,)
     return ParticleTorch.from_tensors(mass=mass, position=pos, velocity=vel)

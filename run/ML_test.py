@@ -35,8 +35,12 @@ particle = make_particle(ptcls, device=device, dtype=dtype)
 particle.period       = torch.tensor(T, device=device, dtype=dtype)
 particle.current_time = torch.tensor(0, device=device, dtype=dtype)
 
-#input_size = 10     # Number of input features: force + masses + velocities
-input_size = 2     # Number of input features: force + masses + velocities
+with torch.no_grad():
+    dummy_feat = particle.system_features(mode="basic")
+if dummy_feat.dim() == 1:
+    input_size = dummy_feat.numel()
+else:
+    input_size = dummy_feat.shape[-1]
 hidden_dim = [200,1000, 1000, 200]     # Number of hidden neurons
 output_size = 2     # Number of output two time steps
 

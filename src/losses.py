@@ -1,11 +1,14 @@
 import math
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import numpy as np
 from .particle import ParticleTorch
-torch.autograd.set_detect_anomaly(True)
+
+if os.getenv("AITIMESTEPPER_DETECT_ANOMALY", "0") == "1":
+    torch.autograd.set_detect_anomaly(True)
 
 
 
@@ -316,7 +319,6 @@ double_info = torch.finfo(torch.double)
 double_tiny = double_info.tiny
 float_tiny = float_info.tiny
 eps = float_tiny
-
 
 
 

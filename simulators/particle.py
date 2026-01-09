@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Sequence
 
 import torch
 import numpy as np
@@ -68,17 +68,33 @@ class Particle:
 
     # ----------------------------------
 
-    def update_dt_from_model(self, secondary=None, eps=1e-6):
+    def update_dt_from_model(self, secondary=None, eps=1e-6, system=None, feature_mode: str = "basic"):
         """
         Use a PyTorch model to compute dt while all particle data stays NumPy.
         """
         if self.model is None:
             raise RuntimeError("No model attached. Use update_model().")
 
+        if system is not None:
+            dt = predict_dt_from_model_system(
+                self.model,
+                system=system,
+                eps=eps,
+                device=self.device,
+                feature_mode=feature_mode,
+            )
+            for p in system:
+                p.dt = dt
+            self.dt = dt
+            return dt
 
         dt = predict_dt_from_model(
-            self.model, self, secondary,
-            eps=eps, device=self.device
+            self.model,
+            self,
+            secondary,
+            eps=eps,
+            device=self.device,
+            feature_mode=feature_mode,
         )
         self.dt = dt
         return dt
@@ -91,12 +107,11 @@ class Particle:
         history_buffer: Optional[HistoryBuffer] = None,
         eps: float = 1e-6,
         push_history: bool = True,
+        system: Optional[Sequence["Particle"]] = None,
     ):
         """Predict dt using a history-aware model trained with HistoryBuffer."""
         if self.model is None:
             raise RuntimeError("No model attached. Use update_model().")
-        if secondary is None:
-            raise ValueError("A secondary particle is required.")
 
         hb = history_buffer or self.history_buffer
         if hb is None:
@@ -105,7 +120,12 @@ class Particle:
             )
 
         device = getattr(self, "device", torch.device("cpu"))
-        state = _pair_to_history_state(self, secondary, device=device)
+        if system is not None:
+            state = _system_to_history_state(system, device=device)
+        else:
+            if secondary is None:
+                raise ValueError("A secondary particle is required.")
+            state = _pair_to_history_state(self, secondary, device=device)
         feats = hb.features_for(state)
         if feats.dim() == 1:
             feats = feats.unsqueeze(0)
@@ -123,8 +143,14 @@ class Particle:
         dt_value = float(dt_tensor.squeeze(0).item())
         self.dt = dt_value
 
-        if push_history:
-            _maybe_push_history_state(hb, state, self, secondary)
+        if system is not None:
+            for p in system:
+                p.dt = dt_value
+            if push_history:
+                _maybe_push_history_state_system(hb, state, system)
+        else:
+            if push_history:
+                _maybe_push_history_state(hb, state, self, secondary)
 
         return dt_value
 
@@ -145,231 +171,232 @@ class Particle:
             raise KeyError(f"Particle has no attribute '{key}'")
 
 
-def predict_dt_from_model(model, p1, p2=None, eps=1e-6, device=None):
-    """
-    Compute dt from a PyTorch model while inputs are NumPy arrays.
-    Returns a Python float.
-    """
-    if device is None:
-        device = torch.device("cpu")
+def system_from_particles(
+    particles: Sequence["Particle"],
+    device: torch.device,
+    dtype: torch.dtype | None = None,
+) -> ParticleTorch:
+    if not particles:
+        raise ValueError("system_from_particles requires a non-empty particle sequence")
+    if dtype is None:
+        dtype = torch.double
 
-    if p2 is None:
-        raise ValueError("predict_dt_from_model requires both p1 and p2")
-
-    # ---------------------------------------------------------
-    # 1. Distance between the two particles (NumPy)
-    # ---------------------------------------------------------
-    # r = x1 - x0
-    r = p2.position - p1.position          # shape (ndim,)
-    dist = np.linalg.norm(r)               # scalar
-
-    # ---------------------------------------------------------
-    # 2. Acceleration magnitude of chosen particle (here: p1)
-    # ---------------------------------------------------------
-    acc = p1.acceleration                  # shape (ndim,)
-    a_mag = np.linalg.norm(acc)           # scalar
-
-    # ---------------------------------------------------------
-    # 3. Build feature vector [dist, a_mag] to match NN training
-    # ---------------------------------------------------------
-    feat_np = np.array([dist, a_mag], dtype=np.double)  # shape (2,)
-    x = torch.from_numpy(feat_np).to(device=device, dtype=torch.double).unsqueeze(0)  # shape (1, 2)
-
-
-    model = model.to(device)
-    model.eval()
-    with torch.no_grad():
-        dt, E = model(x).squeeze(0)      # scalar
-
-    #print(x, dt)
-
-    return float(dt.item())              # return pure Python float
-
-def predict_dt_from_model_torch(model, p1, p2=None, G=1.0, which_accel=0, eps=1e-6, device=None):
-    """
-    Predict dt (and E_hat) from a PyTorch model using the full
-    feature vector produced by ParticleTorch.
-
-    Feature vector format:
-
-        [distance,
-         accel_mag,
-         pos0_x, pos0_y, ..., pos1_x, pos1_y, ...,
-         vel0_x, vel0_y, ..., vel1_x, vel1_y, ...]
-
-    Returns: dt (python float)
-    """
-    if device is None:
-        device = torch.device("cpu")
-
-    if p2 is None:
-        raise ValueError("predict_dt_from_model requires both p1 and p2")
-
-    # ---------------------------------------------------------
-    # 1. Build a temporary ParticleTorch(batch=1) containing 2 particles
-    # ---------------------------------------------------------
-    # expected ParticleTorch.from_tensors:
-    #   position: (B, N, dim)
-    #   velocity: (B, N, dim)
-    #   mass:     (B, N)
-    # p1 and p2 are single particles → shape them into batch=1
-
-    pos = torch.stack([p1.position, p2.position], dim=0).unsqueeze(0)   # (1, 2, dim)
-    vel = torch.stack([p1.velocity, p2.velocity], dim=0).unsqueeze(0)   # (1, 2, dim)
-    mass = torch.tensor([p1.mass, p2.mass], dtype=pos.dtype).unsqueeze(0)  # (1, 2)
-
-    # accelerations as well
-    acc = torch.stack([p1.acceleration, p2.acceleration], dim=0).unsqueeze(0)  # (1, 2, dim)
-
-    # Build a tiny ParticleTorch object matching training format
-    tmp = ParticleTorch.from_tensors(
-        mass=mass.to(device),
-        position=pos.to(device),
-        velocity=vel.to(device),
-    )
-    tmp.acceleration = acc.to(device)
-
-    # ---------------------------------------------------------
-    # 2. Compute feature vector exactly like training
-    # ---------------------------------------------------------
-    feats = tmp.features(G=G, which_accel=which_accel)   # shape (1, F)
-
-    # ---------------------------------------------------------
-    # 3. Run model
-    # ---------------------------------------------------------
-    model = model.to(device)
-    model.eval()
-
-    with torch.no_grad():
-        params = model(feats)    # (1, 2)
-        dt_raw     = params[0, 0]
-        E_hat_raw  = params[0, 1]
-
-    # enforce positivity with softplus-like lower bound
-    dt = dt_raw + eps
-
-    return float(dt.item())
-
-def predict_dt_from_model_(model, p1, p2=None, G=1.0, which_accel=0, eps=1e-6, device=None):
-    """
-    Predict dt from a trained PyTorch model using NumPy-based feature
-    extraction matching the NN training format:
-
-        features = [
-            distance,
-            accel_mag,
-            pos0_x, pos0_y, ...,
-            pos1_x, pos1_y, ...,
-            vel0_x, vel0_y, ...,
-            vel1_x, vel1_y, ...
-        ]
-
-    Inputs p1, p2 must have:
-        p.position      -> numpy array (dim,)
-        p.velocity      -> numpy array (dim,)
-        p.acceleration -> numpy array (dim,)
-    """
-    if device is None:
-        device = torch.device("cpu")
-
-    if p2 is None:
-        raise ValueError("predict_dt_from_model requires both p1 and p2")
-
-    # ---------------------------------------------------------
-    # 1. Positions, velocities, accelerations (NumPy)
-    # ---------------------------------------------------------
-    pos0 = np.asarray(p1.position, dtype=np.float64)   # (dim,)
-    pos1 = np.asarray(p2.position, dtype=np.float64)
-    vel0 = np.asarray(p1.velocity, dtype=np.float64)
-    vel1 = np.asarray(p2.velocity, dtype=np.float64)
-    acc0 = np.asarray(p1.acceleration, dtype=np.float64)
-    acc1 = np.asarray(p2.acceleration, dtype=np.float64)
-
-    # dimension
-    dim = pos0.shape[0]
-
-    # ---------------------------------------------------------
-    # 2. Distance between the two particles
-    # ---------------------------------------------------------
-    r = pos1 - pos0                   # (dim,)
-    dist = np.linalg.norm(r)          # scalar
-
-    # ---------------------------------------------------------
-    # 3. Acceleration magnitude (choose particle 0 or 1)
-    # ---------------------------------------------------------
-    if which_accel == 0:
-        a_mag = np.linalg.norm(acc0)
-    else:
-        a_mag = np.linalg.norm(acc1)
-
-    # ---------------------------------------------------------
-    # 4. Flatten position and velocity info
-    # ---------------------------------------------------------
-    # pos0 = (dim,), pos1 = (dim,) → pos_flat shape: (2*dim,)
-    pos_flat = np.concatenate([pos0, pos1], axis=0)
-
-    # vel0 + vel1 → (2*dim,)
-    vel_flat = np.concatenate([vel0, vel1], axis=0)
-
-    # ---------------------------------------------------------
-    # 5. Build final feature vector
-    # ---------------------------------------------------------
-    # [ dist, a_mag, pos0..., pos1..., vel0..., vel1... ]
-    feat_np = np.concatenate([
-        np.array([dist, a_mag], dtype=np.float64),
-        pos_flat,
-        vel_flat
-    ], axis=0)
-
-    # final shape = (2 + 2*dim + 2*dim,) → (2 + 4*dim,)
-    # example for dim=2 → shape (10,)
-
-    # ---------------------------------------------------------
-    # 6. Convert to PyTorch batch = (1, F)
-    # ---------------------------------------------------------
-    x = torch.from_numpy(feat_np).to(device=device, dtype=torch.double)
-    x = x.unsqueeze(0)   # (1, F)
-
-    # ---------------------------------------------------------
-    # 7. Run model
-    # ---------------------------------------------------------
-    model = model.to(device)
-    model.eval()
-
-    with torch.no_grad():
-        params = model(x)        # (1, 2)
-        dt_raw = params[0, 0]
-        E_raw  = params[0, 1]
-
-    # safety: enforce positivity
-    dt = dt_raw + eps
-
-    return float(dt.item())
-
-
-def _pair_to_history_state(primary: Particle, secondary: Particle, device: torch.device) -> ParticleTorch:
     pos = torch.tensor(
-        np.stack([primary.position, secondary.position], axis=0),
-        dtype=torch.double,
+        np.stack([p.position for p in particles], axis=0),
+        dtype=dtype,
         device=device,
     )
     vel = torch.tensor(
-        np.stack([primary.velocity, secondary.velocity], axis=0),
-        dtype=torch.double,
+        np.stack([p.velocity for p in particles], axis=0),
+        dtype=dtype,
         device=device,
     )
-    mass = torch.tensor([primary.mass, secondary.mass], dtype=torch.double, device=device)
-    dt_value = min(primary.dt, secondary.dt)
-    dt_tensor = torch.tensor(dt_value, dtype=torch.double, device=device)
+    mass = torch.tensor([p.mass for p in particles], dtype=dtype, device=device)
+
+    dt_value = min(p.dt for p in particles)
+    softening = max(p.softening for p in particles)
+    dt_tensor = torch.tensor(dt_value, dtype=dtype, device=device)
 
     state = ParticleTorch.from_tensors(
         mass=mass,
         position=pos,
         velocity=vel,
         dt=dt_tensor,
-        softening=max(primary.softening, secondary.softening),
+        softening=softening,
     )
     return state
+
+
+def predict_dt_from_model_system(
+    model,
+    system: Sequence["Particle"],
+    eps: float = 1e-6,
+    device: torch.device | None = None,
+    feature_mode: str = "basic",
+):
+    if device is None:
+        device = torch.device("cpu")
+
+    state = system_from_particles(system, device=device, dtype=torch.double)
+    feats = state.system_features(mode=feature_mode)
+    if feats.dim() == 1:
+        feats = feats.unsqueeze(0)
+
+    model = model.to(device)
+    model.eval()
+    with torch.no_grad():
+        params = model(feats)
+        if params.dim() == 1:
+            params = params.unsqueeze(0)
+        dt_raw = params[:, 0]
+
+    dt_tensor = dt_raw + eps
+    if dt_tensor.numel() == 1:
+        return float(dt_tensor.squeeze(0).item())
+    return dt_tensor
+
+
+def predict_dt_from_history_model_system(
+    model,
+    system: Sequence["Particle"],
+    history_buffer: HistoryBuffer,
+    eps: float = 1e-6,
+    device: torch.device | None = None,
+    push_history: bool = True,
+):
+    if device is None:
+        device = torch.device("cpu")
+    if history_buffer is None:
+        raise ValueError("history_buffer is required for history-based prediction")
+
+    state = _system_to_history_state(system, device=device)
+    feats = history_buffer.features_for(state)
+    if feats.dim() == 1:
+        feats = feats.unsqueeze(0)
+    feats = feats.to(device=device, dtype=torch.double)
+
+    model = model.to(device)
+    model.eval()
+    with torch.no_grad():
+        params = model(feats)
+        if params.dim() == 1:
+            params = params.unsqueeze(0)
+        dt_raw = params[:, 0]
+
+    dt_value = float((dt_raw + eps).squeeze(0).item())
+    if push_history:
+        _maybe_push_history_state_system(history_buffer, state, system)
+    return dt_value
+
+
+def predict_dt_from_model(
+    model,
+    p1,
+    p2=None,
+    eps=1e-6,
+    device=None,
+    system=None,
+    feature_mode: str = "basic",
+):
+    """
+    Compute dt from a PyTorch model while inputs are NumPy arrays.
+    Supports either a 2-body pair (p1, p2) or an N-body system list.
+    """
+    if device is None:
+        device = torch.device("cpu")
+
+    if system is not None:
+        return predict_dt_from_model_system(
+            model,
+            system=system,
+            eps=eps,
+            device=device,
+            feature_mode=feature_mode,
+        )
+    if p2 is None:
+        raise ValueError("predict_dt_from_model requires both p1 and p2 or a system list")
+
+    return predict_dt_from_model_system(
+        model,
+        system=[p1, p2],
+        eps=eps,
+        device=device,
+        feature_mode=feature_mode,
+    )
+
+def predict_dt_from_model_torch(
+    model,
+    p1,
+    p2=None,
+    eps=1e-6,
+    device=None,
+    system=None,
+    feature_mode: str = "basic",
+):
+    """
+    Predict dt using torch-based N-body system features.
+    """
+    if device is None:
+        device = torch.device("cpu")
+    if system is not None:
+        return predict_dt_from_model_system(
+            model,
+            system=system,
+            eps=eps,
+            device=device,
+            feature_mode=feature_mode,
+        )
+    if p2 is None:
+        raise ValueError("predict_dt_from_model_torch requires both p1 and p2 or a system list")
+    return predict_dt_from_model_system(
+        model,
+        system=[p1, p2],
+        eps=eps,
+        device=device,
+        feature_mode=feature_mode,
+    )
+
+def predict_dt_from_model_(
+    model,
+    p1,
+    p2=None,
+    eps=1e-6,
+    device=None,
+    system=None,
+    feature_mode: str = "basic",
+):
+    """
+    Legacy wrapper that forwards to N-body system features.
+    """
+    if device is None:
+        device = torch.device("cpu")
+    if system is not None:
+        return predict_dt_from_model_system(
+            model,
+            system=system,
+            eps=eps,
+            device=device,
+            feature_mode=feature_mode,
+        )
+    if p2 is None:
+        raise ValueError("predict_dt_from_model_ requires both p1 and p2 or a system list")
+    return predict_dt_from_model_system(
+        model,
+        system=[p1, p2],
+        eps=eps,
+        device=device,
+        feature_mode=feature_mode,
+    )
+
+
+def _system_to_history_state(particles: Sequence[Particle], device: torch.device) -> ParticleTorch:
+    pos = torch.tensor(
+        np.stack([p.position for p in particles], axis=0),
+        dtype=torch.double,
+        device=device,
+    )
+    vel = torch.tensor(
+        np.stack([p.velocity for p in particles], axis=0),
+        dtype=torch.double,
+        device=device,
+    )
+    mass = torch.tensor([p.mass for p in particles], dtype=torch.double, device=device)
+    dt_value = min(p.dt for p in particles)
+    dt_tensor = torch.tensor(dt_value, dtype=torch.double, device=device)
+    softening = max(p.softening for p in particles)
+
+    state = ParticleTorch.from_tensors(
+        mass=mass,
+        position=pos,
+        velocity=vel,
+        dt=dt_tensor,
+        softening=softening,
+    )
+    return state
+
+
+def _pair_to_history_state(primary: Particle, secondary: Particle, device: torch.device) -> ParticleTorch:
+    return _system_to_history_state([primary, secondary], device=device)
 
 
 def _maybe_push_history_state(
@@ -379,6 +406,19 @@ def _maybe_push_history_state(
     secondary: Particle,
 ):
     token = (float(primary.current_time), float(secondary.current_time))
+    last_token = getattr(history_buffer, "_last_push_token", None)
+    if last_token == token:
+        return
+    history_buffer.push(state)
+    history_buffer._last_push_token = token
+
+
+def _maybe_push_history_state_system(
+    history_buffer: HistoryBuffer,
+    state: ParticleTorch,
+    particles: Sequence[Particle],
+):
+    token = tuple(float(p.current_time) for p in particles)
     last_token = getattr(history_buffer, "_last_push_token", None)
     if last_token == token:
         return

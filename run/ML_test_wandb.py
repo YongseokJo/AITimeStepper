@@ -97,7 +97,12 @@ particle.period       = torch.tensor(T, device=device, dtype=dtype)
 particle.current_time = torch.tensor(0, device=device, dtype=dtype)
 
 # Model configuration
-input_size = 2
+with torch.no_grad():
+    dummy_feat = particle.system_features(mode="basic")
+if dummy_feat.dim() == 1:
+    input_size = dummy_feat.numel()
+else:
+    input_size = dummy_feat.shape[-1]
 hidden_dim = [200, 1000, 1000, 200]
 output_size = 2
 

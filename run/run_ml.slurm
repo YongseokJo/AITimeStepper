@@ -4,9 +4,10 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=4    # <- match to OMP_NUM_THREADS
 ###SBATCH --partition=gpuA40x4      # <- or one of: gpuA100x4 gpuA40x4 gpuA100x8 gpuMI100x8
-#SBATCH --account=bfpt-delta-gpu    # <- match to a "Project" returned by the "accounts" command
-#SBATCH --job-name=aiT
-#SBATCH --time=02:00:00      # hh:mm:ss for the job
+#SBATCH --account=bgak-delta-gpu    # <- match to a "Project" returned by the "accounts" command
+#SBATCH --job-name=aiT_speedup
+#SBATCH --time=12:00:00      # hh:mm:ss for the job
+
 #SBATCH --constraint="scratch"
 #SBATCH --mail-user=g.kerex@gmail.com
 #SBATCH --mail-type="BEGIN,END"
@@ -43,4 +44,6 @@ which python
 echo "job is starting on `hostname`"
 #srun python3 simulator_test.py
 
-python3 ML_test.py
+#python3 ML_test.py
+
+python ML_history_wandb.py --epochs 2000 --n-steps 20 --history-len 20 --feature-type delta_mag --save-name test_history_logs --wandb-project AITimeStepper --wandb-name history_ml_mag_20

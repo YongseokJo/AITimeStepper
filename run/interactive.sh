@@ -7,7 +7,7 @@ srun \
 	--cpus-per-task=4 \
 	--partition=gpuA100x4 \
 	--gpus-per-node=1 \
-	--account=bfpt-delta-gpu \
+	--account=bgak-delta-gpu \
 	--time=04:00:00 \
 	--constraint="scratch" \
 	--job-name=interact \

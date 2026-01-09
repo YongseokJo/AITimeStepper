@@ -10,7 +10,7 @@ import argparse
 project_root = pathlib.Path(__file__).resolve().parents[1]
 sys.path.append(str(project_root))
 from simulators import *
-from src import FullyConnectedNN, HistoryBuffer
+from src import FullyConnectedNN, HistoryBuffer, ParticleTorch
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
@@ -38,7 +38,7 @@ parser.add_argument("--model-path", type=str,
                     help="Path to the model checkpoint to load (torch .pt)")
 parser.add_argument("--history-len", type=int, default=0,
                     help="Length of history (in steps) for history-aware ML model")
-parser.add_argument("--history-feature-type", choices=["basic", "rich"], default="basic",
+parser.add_argument("--history-feature-type", choices=["basic", "rich", "delta_mag"], default="delta_mag",
                     help="HistoryBuffer feature type used during training")
 args = parser.parse_args()
 dt = args.dt
@@ -76,7 +76,34 @@ p1, p2, T = generate_IC(e=e, a=a, dt=dt)
 if isML:
     # 1. Rebuild the model and load weights
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    input_size = 2*(history_len+1) # Number of input features: force + masses + velocities
+    if history_len > 0:
+        history_buffer = HistoryBuffer(history_len=history_len,
+                                       feature_type=history_feature_type)
+        state = ParticleTorch.from_tensors(
+            mass=torch.tensor([p1.mass, p2.mass], dtype=torch.double, device=device),
+            position=torch.tensor([p1.position, p2.position], dtype=torch.double, device=device),
+            velocity=torch.tensor([p1.velocity, p2.velocity], dtype=torch.double, device=device),
+            dt=torch.tensor(min(p1.dt, p2.dt), dtype=torch.double, device=device),
+        )
+        with torch.no_grad():
+            dummy_feat = history_buffer.features_for(state)
+        if dummy_feat.dim() == 1:
+            input_size = dummy_feat.numel()
+        else:
+            input_size = dummy_feat.shape[-1]
+    else:
+        state = ParticleTorch.from_tensors(
+            mass=torch.tensor([p1.mass, p2.mass], dtype=torch.double, device=device),
+            position=torch.tensor([p1.position, p2.position], dtype=torch.double, device=device),
+            velocity=torch.tensor([p1.velocity, p2.velocity], dtype=torch.double, device=device),
+            dt=torch.tensor(min(p1.dt, p2.dt), dtype=torch.double, device=device),
+        )
+        with torch.no_grad():
+            dummy_feat = state.system_features(mode="basic")
+        if dummy_feat.dim() == 1:
+            input_size = dummy_feat.numel()
+        else:
+            input_size = dummy_feat.shape[-1]
     #hidden_dim = [8,32,8]     # Number of hidden neurons
     hidden_dim = [200,1000, 1000, 200]     # Number of hidden neurons
     output_size = 2     # Number of output two time steps
@@ -97,8 +124,6 @@ if isML:
     p2.update_model(model, device)
 
     if history_len > 0:
-        history_buffer = HistoryBuffer(history_len=history_len,
-                                       feature_type=history_feature_type)
         p1.attach_history_buffer(history_buffer)
         p2.attach_history_buffer(history_buffer)
         print(f"Attached HistoryBuffer len={history_len}, type={history_feature_type}.")
@@ -537,4 +562,3 @@ from matplotlib.animation import FFMpegWriter
 writer = FFMpegWriter(fps=30, bitrate=1800)
 ani.save(f"../data/movie/two_body_movie_{suffix}.mp4", writer=writer, dpi=120)
 plt.close(fig)
-

@@ -2,6 +2,7 @@ import argparse
 import pathlib
 import sys
 import random
+import time
 
 import numpy as np
 import torch
@@ -34,20 +35,33 @@ parser.add_argument("--rel-loss-bound", type=float, default=1e-5, help="relative
 parser.add_argument("--energy-threshold", type=float, default=2e-4, help="accept/reject energy threshold")
 parser.add_argument("--E_lower", type=float, default=1e-6, help="lower energy bound for loss calculation")
 parser.add_argument("--E_upper", type=float, default=1e-4, help="upper energy bound for loss calculation")
+parser.add_argument("--L_lower", type=float, default=1e-4, help="lower angular momentum bound for loss calculation")
+parser.add_argument("--L_upper", type=float, default=1e-2, help="upper angular momentum bound for loss calculation")
 parser.add_argument("--eccentricity", "-e", type=float, default=0.9, help="eccentricity for generate_IC")
 parser.add_argument("--semi-major", "-a", type=float, default=1.0, help="semi-major axis for generate_IC")
 parser.add_argument("--history-len", type=int, default=3, help="number of past states to include")
-parser.add_argument("--feature-type", type=str, choices=["basic", "rich"], default="basic", help="feature type per state")
+parser.add_argument("--feature-type", type=str, choices=["basic", "rich", "delta_mag"], default="delta_mag", help="feature type per state")
 parser.add_argument("--wandb-project", type=str, default="AITimeStepper", help="W&B project name")
 parser.add_argument("--wandb-name", type=str, default="two_body_ML_integrator_history", help="W&B run name")
 parser.add_argument("--optuna", action="store_true", help="optuna mode: print final metrics as JSON to stdout")
 parser.add_argument("--save-name", "-s", type=str, default=None, help="base filename/dir under data/ to save outputs")
 parser.add_argument("--device", type=str, choices=["auto", "cpu", "cuda"], default="auto", help="compute device to use (auto, cpu, or cuda)")
+parser.add_argument("--dtype", type=str, choices=["float32", "float64"], default="float64", help="tensor dtype for training")
+parser.add_argument("--tf32", action="store_true", help="enable TF32 matmul on CUDA (faster, less precise)")
+parser.add_argument("--compile", action="store_true", help="use torch.compile for model")
+parser.add_argument("--detect-anomaly", action="store_true", help="enable autograd anomaly detection (slow)")
+parser.add_argument("--replay-steps", type=int, default=1000, help="max replay optimization steps per epoch")
+parser.add_argument("--replay-batch-size", type=int, default=512, help="replay batch size")
+parser.add_argument("--debug", action="store_true", help="enable debug printouts (timing + progress)")
+parser.add_argument("--debug-every", type=int, default=1, help="print debug info every N epochs")
+parser.add_argument("--debug-replay-every", type=int, default=10, help="print debug info every N replay steps")
 args = parser.parse_args()
 
-dtype = torch.double
+dtype_map = {"float32": torch.float32, "float64": torch.float64}
+dtype = dtype_map[args.dtype]
 torch.set_default_dtype(dtype)
-torch.autograd.set_detect_anomaly(True)
+if args.detect_anomaly:
+    torch.autograd.set_detect_anomaly(True)
 # Choose device with graceful fallback
 if args.device == "cpu":
     device = torch.device("cpu")
@@ -57,6 +71,28 @@ else:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 print(f"Using device: {device}")
+if args.tf32 and device.type == "cuda":
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    try:
+        torch.set_float32_matmul_precision("high")
+    except Exception:
+        pass
+
+
+def _sync_if_cuda():
+    try:
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+    except Exception:
+        pass
+
+
+def _dbg(msg: str):
+    if not args.debug:
+        return
+    ts = time.strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[DEBUG {ts}] {msg}", flush=True)
 
 wandb.init(
     project=args.wandb_project,
@@ -69,11 +105,22 @@ wandb.init(
         "n_steps": args.n_steps,
         "rel_loss_bound": args.rel_loss_bound,
         "energy_threshold": args.energy_threshold,
+        "E_lower": args.E_lower,
+        "E_upper": args.E_upper,
+        "L_lower": args.L_lower,
+        "L_upper": args.L_upper,
         "eccentricity": args.eccentricity,
         "semi_major": args.semi_major,
         "history_len": args.history_len,
         "feature_type": args.feature_type,
     },
+)
+
+_dbg(
+    "run config: "
+    f"epochs={args.epochs} n_steps={args.n_steps} lr={args.lr} wd={args.weight_decay} "
+    f"E_bounds=({args.E_lower},{args.E_upper}) L_bounds=({args.L_lower},{args.L_upper}) "
+    f"history_len={args.history_len} feature_type={args.feature_type} device={device}"
 )
 
 # prepare save directories
@@ -128,6 +175,11 @@ model = FullyConnectedNN(
     output_positive=True,
 ).to(device)
 model.to(dtype=dtype)
+if args.compile:
+    try:
+        model = torch.compile(model)
+    except Exception as e:
+        print(f"Warning: torch.compile failed ({e}); continuing without compile.", file=sys.stderr)
 
 optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
@@ -139,11 +191,17 @@ rel_loss_bound = args.rel_loss_bound
 # training history
 epoch_log = []
 accepted_states = []  # list of (particle, history_snapshot)
-replay_batch_size = 512
+replay_batch_size = args.replay_batch_size
 min_replay_size = 2
 
 for epoch in range(num_epochs):
+    epoch_t0 = time.perf_counter()
+    if args.debug and (epoch % max(args.debug_every, 1) == 0):
+        _dbg(f"epoch {epoch} start | accepted_states={len(accepted_states)}")
+
     # build loss using history-aware features
+    loss_t0 = time.perf_counter()
+    _sync_if_cuda()
     loss, logs, p_next = loss_fn_batch_history(
         model,
         particle,
@@ -152,15 +210,45 @@ for epoch in range(num_epochs):
         rel_loss_bound=rel_loss_bound,
         E_lower=args.E_lower,
         E_upper=args.E_upper,
+        L_lower=args.L_lower,
+        L_upper=args.L_upper,
         return_particle=True,
     )
+    _sync_if_cuda()
+    loss_t1 = time.perf_counter()
+    if args.debug and (epoch % max(args.debug_every, 1) == 0):
+        try:
+            dt_val = float(logs.get("dt").item())
+        except Exception:
+            dt_val = float("nan")
+        try:
+            rel_dE_val_dbg = float(logs.get("rel_dE").item())
+        except Exception:
+            rel_dE_val_dbg = float("nan")
+        try:
+            rel_dL_val_dbg = float(logs.get("rel_dL_mean", torch.tensor(float('nan'))).item())
+        except Exception:
+            rel_dL_val_dbg = float("nan")
+        _dbg(
+            f"epoch {epoch} forward+loss done in {loss_t1 - loss_t0:.3f}s "
+            f"| loss={float(loss.item()):.6e} dt={dt_val:.6e} rel_dE={rel_dE_val_dbg:.6e} rel_dL_mean={rel_dL_val_dbg:.6e}"
+        )
 
+    opt_t0 = time.perf_counter()
+    _sync_if_cuda()
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
+    _sync_if_cuda()
+    opt_t1 = time.perf_counter()
+    if args.debug and (epoch % max(args.debug_every, 1) == 0):
+        _dbg(f"epoch {epoch} backward+step done in {opt_t1 - opt_t0:.3f}s")
 
     rel_dE_val = logs["rel_dE"].item()
     accepted = rel_dE_val <= energy_threshold
+
+    if args.debug and (epoch % max(args.debug_every, 1) == 0):
+        _dbg(f"epoch {epoch} accept={int(accepted)} | rel_dE={float(rel_dE_val):.6e} threshold={energy_threshold:.6e}")
 
     # record
     epoch_log.append({
@@ -180,6 +268,12 @@ for epoch in range(num_epochs):
         "loss_energy_next": float(logs.get("loss_energy_next", torch.tensor(float('nan'))).item()),
         "loss_energy_last": float(logs.get("loss_energy_last", torch.tensor(float('nan'))).item()),
         "loss_energy_max": float(logs.get("loss_energy_max", torch.tensor(float('nan'))).item()),
+        # angular momentum metrics
+        "rel_dL_mean": float(logs.get("rel_dL_mean", torch.tensor(float('nan'))).item()),
+        "rel_dL_next": float(logs.get("rel_dL_next", torch.tensor(float('nan'))).item()),
+        "rel_dL_last": float(logs.get("rel_dL_last", torch.tensor(float('nan'))).item()),
+        "rel_dL_max": float(logs.get("rel_dL_max", torch.tensor(float('nan'))).item()),
+        "loss_ang": float(logs.get("loss_ang", torch.tensor(float('nan'))).item()),
         "loss_pred": float(logs.get("loss_pred", torch.tensor(float('nan'))).item()),
         "loss_dt": float(logs.get("loss_dt", torch.tensor(float('nan'))).item()),
     })
@@ -195,21 +289,40 @@ for epoch in range(num_epochs):
 
     # ===== Replay Buffer Training (train on batch of accepted states) =====
     if len(accepted_states) >= min_replay_size:
+        rep_outer_t0 = time.perf_counter()
+        if args.debug and (epoch % max(args.debug_every, 1) == 0):
+            _dbg("enter replay buffer training")
+
         batch_states = random.sample(
             accepted_states,
             k=min(replay_batch_size, len(accepted_states))
         )
 
         batch_states_detached = [p.clone_detached() for (p, _) in batch_states]
+        stack_t0 = time.perf_counter()
         batch_state = stack_particles(batch_states_detached)
+        stack_t1 = time.perf_counter()
         batch_histories = [h for (_, h) in batch_states]
 
-        max_replay_steps = 1000
+        if args.debug and (epoch % max(args.debug_every, 1) == 0):
+            try:
+                pos_shape = tuple(batch_state.position.shape)
+            except Exception:
+                pos_shape = None
+            _dbg(
+                f"replay batch built in {stack_t1 - stack_t0:.3f}s "
+                f"| batch_size={len(batch_states_detached)} pos_shape={pos_shape} histories={len(batch_histories)}"
+            )
+
+        max_replay_steps = args.replay_steps
 
         for inner_step in range(max_replay_steps):
             # LBFGS requires a closure
             if isinstance(optimizer, torch.optim.LBFGS):
                 stored_rep = {}
+
+                if args.debug and (epoch % max(args.debug_every, 1) == 0) and inner_step == 0:
+                    _dbg("replay optimizer is LBFGS (closure may run multiple times per step)")
 
                 def closure_rep():
                     stored_rep['loss'], stored_rep['logs'], _ = loss_fn_batch_history_batch(
@@ -218,6 +331,10 @@ for epoch in range(num_epochs):
                         batch_histories,
                         n_steps=n_steps,
                         rel_loss_bound=rel_loss_bound,
+                        E_lower=args.E_lower,
+                        E_upper=args.E_upper,
+                        L_lower=args.L_lower,
+                        L_upper=args.L_upper,
                         return_particle=False,
                     )
                     optimizer.zero_grad()
@@ -228,6 +345,8 @@ for epoch in range(num_epochs):
                 replay_loss = stored_rep['loss']
                 logs_rep = stored_rep['logs']
             else:
+                rep_step_t0 = time.perf_counter()
+                _sync_if_cuda()
                 optimizer.zero_grad()
                 replay_loss, logs_rep, _ = loss_fn_batch_history_batch(
                     model,
@@ -235,10 +354,30 @@ for epoch in range(num_epochs):
                     batch_histories,
                     n_steps=n_steps,
                     rel_loss_bound=rel_loss_bound,
+                    E_lower=args.E_lower,
+                    E_upper=args.E_upper,
+                    L_lower=args.L_lower,
+                    L_upper=args.L_upper,
                     return_particle=False,
                 )
                 replay_loss.backward()
                 optimizer.step()
+                _sync_if_cuda()
+                rep_step_t1 = time.perf_counter()
+
+                if args.debug and (epoch % max(args.debug_every, 1) == 0) and (inner_step % max(args.debug_replay_every, 1) == 0):
+                    try:
+                        rep_rel_dE = float(logs_rep.get('rel_dE', torch.tensor(float('nan'))).item())
+                    except Exception:
+                        rep_rel_dE = float('nan')
+                    try:
+                        rep_rel_dL = float(logs_rep.get('rel_dL_mean', torch.tensor(float('nan'))).item())
+                    except Exception:
+                        rep_rel_dL = float('nan')
+                    _dbg(
+                        f"replay step {inner_step}/{max_replay_steps} done in {rep_step_t1 - rep_step_t0:.3f}s "
+                        f"| replay_loss={float(replay_loss.item()):.6e} mean_rel_dE={rep_rel_dE:.6e} mean_rel_dL={rep_rel_dL:.6e}"
+                    )
 
             rel_dE_full = logs_rep.get('rel_dE_full', logs_rep.get('rel_dE'))
 
@@ -267,10 +406,18 @@ for epoch in range(num_epochs):
                     "replay/loss": replay_loss.item(),
                     "replay/mean_rel_dE": mean_rel_dE,
                     "replay/max_rel_dE": max_rel,
+                    "replay/mean_rel_dL": float(logs_rep.get('rel_dL_mean', torch.tensor(float('nan'))).item()) if torch.is_tensor(logs_rep.get('rel_dL_mean', None)) else float('nan'),
+                    "replay/loss_ang": float(logs_rep.get('loss_ang', torch.tensor(float('nan'))).item()) if torch.is_tensor(logs_rep.get('loss_ang', None)) else float('nan'),
                     "replay/step": inner_step,
                 })
 
+        if args.debug and (epoch % max(args.debug_every, 1) == 0):
+            rep_outer_t1 = time.perf_counter()
+            _dbg(f"exit replay buffer training | elapsed={rep_outer_t1 - rep_outer_t0:.3f}s")
+
     # log to wandb
+    if args.debug and (epoch % max(args.debug_every, 1) == 0):
+        _dbg("wandb.log(epoch metrics) start")
     wandb.log({
         "epoch": epoch,
         "loss": loss.item(),
@@ -290,9 +437,21 @@ for epoch in range(num_epochs):
         "loss_energy_next": logs.get("loss_energy_next", torch.tensor(float('nan'))).item(),
         "loss_energy_last": logs.get("loss_energy_last", torch.tensor(float('nan'))).item(),
         "loss_energy_max": logs.get("loss_energy_max", torch.tensor(float('nan'))).item(),
+        # angular momentum summaries
+        "rel_dL_mean": logs.get("rel_dL_mean", torch.tensor(float('nan'))).item(),
+        "rel_dL_next": logs.get("rel_dL_next", torch.tensor(float('nan'))).item(),
+        "rel_dL_last": logs.get("rel_dL_last", torch.tensor(float('nan'))).item(),
+        "rel_dL_max": logs.get("rel_dL_max", torch.tensor(float('nan'))).item(),
+        "loss_ang": logs.get("loss_ang", torch.tensor(float('nan'))).item(),
         "loss_pred": logs.get("loss_pred", torch.tensor(float('nan'))).item(),
         "loss_dt": logs.get("loss_dt", torch.tensor(float('nan'))).item(),
     })
+    if args.debug and (epoch % max(args.debug_every, 1) == 0):
+        _dbg("wandb.log(epoch metrics) done")
+
+    if args.debug and (epoch % max(args.debug_every, 1) == 0):
+        epoch_t1 = time.perf_counter()
+        _dbg(f"epoch {epoch} end | elapsed={epoch_t1 - epoch_t0:.3f}s")
 
     # try logging full distribution as histogram (if available)
     try:
@@ -364,4 +523,3 @@ try:
             pass
 except Exception:
     pass
-

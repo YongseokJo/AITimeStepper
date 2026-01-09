@@ -20,4 +20,4 @@ which python
 #python ML_test_wandb.py --optimizer adam+lbfgs --adam-epochs 200 --epochs 400 --wandb-name test_run --lr 1e-4 --lbfgs-lr=1e-3
 
 
-python ML_history_wandb.py --epochs 2000 --n-steps 10 --history-len 5 --feature-type basic --save-name test_history_logs --wandb-project AITimeStepper --wandb-name history_ml
+python ML_history_wandb.py --epochs 2000 --n-steps 10 --history-len 5 --feature-type delta_mag --save-name test_history_logs --wandb-project AITimeStepper --wandb-name history_ml
