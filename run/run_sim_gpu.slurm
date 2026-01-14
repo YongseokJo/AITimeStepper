@@ -13,7 +13,7 @@
 ###SBATCH --array=0-2 
 
 ### GPU options ###
-#SBATCH --gpus-per-node=2
+#SBATCH --gpus-per-node=1
 #SBATCH --gpu-bind=none     # <- or closest
 ##SBATCH --mail-user=you@yourinstitution.edu
 ##SBATCH --mail-type="BEGIN,END" See sbatch or srun man pages for more email options
@@ -50,7 +50,9 @@ echo "job is starting on `hostname`"
 #python3 simulator_test.py --e 0.7 --ML
 #python3 simulator_test.py --e 0.9 --ML
 
-MODEL_PATH="/u/gkerex/projects/AITimeStepper/data/test_history_logs/model/model_epoch_0250.pt"
+#MODEL_PATH="/u/gkerex/projects/AITimeStepper/data/test_history_logs/model/model_epoch_0250.pt"
+#python simulator_test.py --ML --model-path=$MODEL_PATH --history-len 5 --a=1 --e=0.9 --save-name="history_test_dL"
 
-python simulator_test.py --ML --model-path=$MODEL_PATH --history-len 5 --a=1 --e=0.9 --save-name="history_test_dL"
+MODEL_PATH="/u/gkerex/projects/AITimeStepper/data/test_history_logs/model/model_epoch_0200.pt"
+python simulator_test.py --ML --model-path=$MODEL_PATH --history-len 20 --a=1 --e=0.9 --save-name="history_test_dL_20_1" --history-feature-type delta_mag
 

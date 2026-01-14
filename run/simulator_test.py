@@ -9,7 +9,14 @@ import argparse
 # Add parent directory of this file (your_project/)
 project_root = pathlib.Path(__file__).resolve().parents[1]
 sys.path.append(str(project_root))
-from simulators import *
+from simulators.particle import Particle, system_from_particles
+from simulators.two_body_simulator import (
+    evolve_dt,
+    generate_IC,
+    total_energy as total_energy_two_body,
+    total_momentum as total_momentum_two_body,
+    total_angular_momentum_com as total_angular_momentum_com_two_body,
+)
 from src import FullyConnectedNN, HistoryBuffer, ParticleTorch
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -76,14 +83,11 @@ p1, p2, T = generate_IC(e=e, a=a, dt=dt)
 if isML:
     # 1. Rebuild the model and load weights
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    state = system_from_particles([p1, p2], device=device, dtype=torch.double)
     if history_len > 0:
-        history_buffer = HistoryBuffer(history_len=history_len,
-                                       feature_type=history_feature_type)
-        state = ParticleTorch.from_tensors(
-            mass=torch.tensor([p1.mass, p2.mass], dtype=torch.double, device=device),
-            position=torch.tensor([p1.position, p2.position], dtype=torch.double, device=device),
-            velocity=torch.tensor([p1.velocity, p2.velocity], dtype=torch.double, device=device),
-            dt=torch.tensor(min(p1.dt, p2.dt), dtype=torch.double, device=device),
+        history_buffer = HistoryBuffer(
+            history_len=history_len,
+            feature_type=history_feature_type,
         )
         with torch.no_grad():
             dummy_feat = history_buffer.features_for(state)
@@ -92,12 +96,6 @@ if isML:
         else:
             input_size = dummy_feat.shape[-1]
     else:
-        state = ParticleTorch.from_tensors(
-            mass=torch.tensor([p1.mass, p2.mass], dtype=torch.double, device=device),
-            position=torch.tensor([p1.position, p2.position], dtype=torch.double, device=device),
-            velocity=torch.tensor([p1.velocity, p2.velocity], dtype=torch.double, device=device),
-            dt=torch.tensor(min(p1.dt, p2.dt), dtype=torch.double, device=device),
-        )
         with torch.no_grad():
             dummy_feat = state.system_features(mode="basic")
         if dummy_feat.dim() == 1:
@@ -170,9 +168,9 @@ while current_dt < final_time:
 
     traj1.append(p1.position.copy())
     traj2.append(p2.position.copy())
-    energies.append(total_energy(p1, p2))
-    momenta.append(total_momentum(p1, p2))
-    angular_momenta.append(total_angular_momentum_com(p1, p2))
+    energies.append(total_energy_two_body(p1, p2))
+    momenta.append(total_momentum_two_body(p1, p2))
+    angular_momenta.append(total_angular_momentum_com_two_body(p1, p2))
     current_dt = min(p1.current_time, p2.current_time)
     steps += 1
 
