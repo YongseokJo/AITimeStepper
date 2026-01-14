@@ -1,7 +1,10 @@
 import torch
 import numpy as np
 
+from typing import Optional
+
 from .nbody_features import system_features as nbody_system_features
+from .external_potentials import ExternalField
 
 class ParticleTorch:
     """
@@ -47,6 +50,9 @@ class ParticleTorch:
         self.period = torch.as_tensor(0.0, dtype=torch.float32, device=device)
         #self.current_time = 0.0
 
+        # Optional analytic external field (e.g. tides) applied on top of N-body gravity.
+        self.external_field: Optional[ExternalField] = None
+
     @classmethod
     def from_tensors(cls, mass, position, velocity,
                      dt=0.0, softening=0.0):
@@ -71,7 +77,12 @@ class ParticleTorch:
 
         obj.softening = float(softening)
         obj.current_time = 0.0
+        obj.external_field = None
         return obj
+
+    def set_external_field(self, field: Optional[ExternalField]):
+        """Attach an analytic external field (e.g. tidal) to this particle state."""
+        self.external_field = field
 
     def clone_detached(self):
         """
@@ -84,10 +95,12 @@ class ParticleTorch:
         dt  = self.dt.detach().clone()
         mass = self.mass.detach().clone()
 
-        return ParticleTorch.from_tensors(
+        cloned = ParticleTorch.from_tensors(
             mass=mass, position=pos, velocity=vel,
             dt=dt, softening=self.softening
         )
+        cloned.external_field = getattr(self, "external_field", None)
+        return cloned
 
     def reset_state(self, position, velocity, dt=None):
         """
@@ -153,6 +166,11 @@ class ParticleTorch:
         # r_ij:    (..., N, N, ndim)
         # inv_r3_m:(..., N, N)
         accel = G * (r_ij * inv_r3_m.unsqueeze(-1)).sum(dim=-2)  # (..., N, ndim)
+
+        field = getattr(self, "external_field", None)
+        if field is not None:
+            t = getattr(self, "current_time", 0.0)
+            accel = accel + field.acceleration(pos, t)
 
         self.acceleration = accel
         return accel
@@ -320,7 +338,23 @@ class ParticleTorch:
 
         #print("KE =", KE, "PE =", pot)
 
-        return KE + pot
+        E = KE + pot
+
+        field = getattr(self, "external_field", None)
+        if field is not None:
+            t = getattr(self, "current_time", 0.0)
+            phi = field.potential(self.position, t)  # (N,)
+
+            # Broadcast mass to per-particle if needed
+            m = self.mass
+            if torch.is_tensor(m) and m.dim() == 0:
+                m = m.expand_as(phi)
+            elif not torch.is_tensor(m):
+                m = torch.tensor(float(m), device=phi.device, dtype=phi.dtype).expand_as(phi)
+
+            E = E + (m * phi).sum()
+
+        return E
 
  
     def total_energy_batch(self, G: float = 1.0):
@@ -379,6 +413,12 @@ class ParticleTorch:
         PE = 0.5 * pair_E.sum(dim=(1, 2))            # (B,)
 
         E = KE + PE                                  # (B,)
+
+        field = getattr(self, "external_field", None)
+        if field is not None:
+            t = getattr(self, "current_time", 0.0)
+            phi = field.potential(pos, t)  # (B, N)
+            E = E + (mass * phi).sum(dim=1)
 
         # If you want scalar for non-batch case:
         if self.position.dim() == 2:
@@ -524,4 +564,8 @@ def stack_particles(particles):
     pos = torch.stack([p.position for p in particles], dim=0)   # (B, N, D)
     vel = torch.stack([p.velocity for p in particles], dim=0)   # (B, N, D)
     mass = torch.stack([p.mass for p in particles], dim=0)      # (B, N) or (B,)
-    return ParticleTorch.from_tensors(mass=mass, position=pos, velocity=vel)
+    out = ParticleTorch.from_tensors(mass=mass, position=pos, velocity=vel)
+    fields = [getattr(p, "external_field", None) for p in particles]
+    if len(fields) > 0 and all(f is fields[0] for f in fields):
+        out.external_field = fields[0]
+    return out

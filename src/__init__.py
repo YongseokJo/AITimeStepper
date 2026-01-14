@@ -5,3 +5,4 @@ from .trainer import *
 from .integrator import *
 from .particle import *
 from .history_buffer import *
+from .external_potentials import *

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Callable, Optional, Sequence
 
 import numpy as np
 
@@ -17,7 +17,14 @@ def _stack_system(particles: Sequence[Particle]):
     return pos, vel, mass, softening
 
 
-def compute_accelerations(positions, masses, softening: float = 0.0, G: float = 1.0):
+def compute_accelerations(
+    positions,
+    masses,
+    softening: float = 0.0,
+    G: float = 1.0,
+    external_acceleration: Optional[Callable[[np.ndarray, float], np.ndarray]] = None,
+    time: float = 0.0,
+):
     """
     Vectorized N-body accelerations for positions (N, D) and masses (N,).
     """
@@ -31,22 +38,55 @@ def compute_accelerations(positions, masses, softening: float = 0.0, G: float = 
     inv_r3 = dist2 ** -1.5
 
     accel = G * np.sum(r_ij * inv_r3[..., None] * m[None, :, None], axis=1)
+
+    if external_acceleration is not None:
+        accel = accel + external_acceleration(pos, float(time))
+
     return accel
 
 
-def evolve_step(positions, velocities, masses, dt, softening: float = 0.0, G: float = 1.0):
+def evolve_step(
+    positions,
+    velocities,
+    masses,
+    dt,
+    softening: float = 0.0,
+    G: float = 1.0,
+    external_acceleration: Optional[Callable[[np.ndarray, float], np.ndarray]] = None,
+    time: float = 0.0,
+):
     """
     One leapfrog step for an N-body system.
     """
-    a_n = compute_accelerations(positions, masses, softening=softening, G=G)
+    a_n = compute_accelerations(
+        positions,
+        masses,
+        softening=softening,
+        G=G,
+        external_acceleration=external_acceleration,
+        time=time,
+    )
     v_half = velocities + 0.5 * a_n * dt
     x_new = positions + v_half * dt
-    a_new = compute_accelerations(x_new, masses, softening=softening, G=G)
+    a_new = compute_accelerations(
+        x_new,
+        masses,
+        softening=softening,
+        G=G,
+        external_acceleration=external_acceleration,
+        time=time + float(dt),
+    )
     v_new = v_half + 0.5 * a_new * dt
     return x_new, v_new, a_new
 
 
-def evolve_particles(particles: Sequence[Particle], dt=None, softening: float | None = None, G: float = 1.0):
+def evolve_particles(
+    particles: Sequence[Particle],
+    dt=None,
+    softening: float | None = None,
+    G: float = 1.0,
+    external_acceleration: Optional[Callable[[np.ndarray, float], np.ndarray]] = None,
+):
     """
     In-place N-body evolution for a list of Particle objects.
     """
@@ -56,7 +96,17 @@ def evolve_particles(particles: Sequence[Particle], dt=None, softening: float | 
     if softening is None:
         softening = soft_default
 
-    x_new, v_new, a_new = evolve_step(pos, vel, mass, dt, softening=softening, G=G)
+    time = float(getattr(particles[0], "current_time", 0.0))
+    x_new, v_new, a_new = evolve_step(
+        pos,
+        vel,
+        mass,
+        dt,
+        softening=softening,
+        G=G,
+        external_acceleration=external_acceleration,
+        time=time,
+    )
     for i, p in enumerate(particles):
         p.position = x_new[i]
         p.velocity = v_new[i]
