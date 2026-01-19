@@ -6,6 +6,8 @@ import torch.nn.functional as F
 
 from src.history_buffer import HistoryBuffer
 from src.particle import ParticleTorch
+from src.model_adapter import ModelAdapter
+from src.config import Config
 
 def get_xp(backend):
     if backend == "torch":
@@ -68,12 +70,23 @@ class Particle:
 
     # ----------------------------------
 
-    def update_dt_from_model(self, secondary=None, eps=1e-6, system=None, feature_mode: str = "basic"):
+    def update_dt_from_model(
+        self,
+        secondary=None,
+        eps=1e-6,
+        system=None,
+        feature_mode: str = "basic",
+        adapter: Optional[ModelAdapter] = None,
+        config: Optional[Config] = None,
+    ):
         """
         Use a PyTorch model to compute dt while all particle data stays NumPy.
         """
         if self.model is None:
             raise RuntimeError("No model attached. Use update_model().")
+
+        if adapter is None and config is not None:
+            adapter = ModelAdapter(config, device=self.device)
 
         if system is not None:
             dt = predict_dt_from_model_system(
@@ -82,6 +95,7 @@ class Particle:
                 eps=eps,
                 device=self.device,
                 feature_mode=feature_mode,
+                adapter=adapter,
             )
             for p in system:
                 p.dt = dt
@@ -95,6 +109,7 @@ class Particle:
             eps=eps,
             device=self.device,
             feature_mode=feature_mode,
+            adapter=adapter,
         )
         self.dt = dt
         return dt
@@ -108,6 +123,8 @@ class Particle:
         eps: float = 1e-6,
         push_history: bool = True,
         system: Optional[Sequence["Particle"]] = None,
+        adapter: Optional[ModelAdapter] = None,
+        config: Optional[Config] = None,
     ):
         """Predict dt using a history-aware model trained with HistoryBuffer."""
         if self.model is None:
@@ -120,37 +137,56 @@ class Particle:
             )
 
         device = getattr(self, "device", torch.device("cpu"))
-        if system is not None:
-            state = _system_to_history_state(system, device=device)
+        if adapter is None and config is not None:
+            adapter = ModelAdapter(config, device=device)
+        if adapter is not None:
+            if system is not None:
+                state = _system_to_history_state(system, device=adapter.device, dtype=adapter.dtype)
+                token = tuple(float(p.current_time) for p in system)
+            else:
+                if secondary is None:
+                    raise ValueError("A secondary particle is required.")
+                state = _pair_to_history_state(self, secondary, device=adapter.device, dtype=adapter.dtype)
+                token = (float(self.current_time), float(secondary.current_time))
+            dt_value = float(adapter.predict_dt(self.model, state, history_buffer=hb, eps=eps))
         else:
-            if secondary is None:
-                raise ValueError("A secondary particle is required.")
-            state = _pair_to_history_state(self, secondary, device=device)
-        feats = hb.features_for(state)
-        if feats.dim() == 1:
-            feats = feats.unsqueeze(0)
-        feats = feats.to(device=device, dtype=torch.double)
+            if system is not None:
+                state = _system_to_history_state(system, device=device)
+            else:
+                if secondary is None:
+                    raise ValueError("A secondary particle is required.")
+                state = _pair_to_history_state(self, secondary, device=device)
+            feats = hb.features_for(state)
+            if feats.dim() == 1:
+                feats = feats.unsqueeze(0)
+            feats = feats.to(device=device, dtype=torch.double)
 
-        model = self.model.to(device)
-        model.eval()
-        with torch.no_grad():
-            params = model(feats)
-            if params.dim() == 1:
-                params = params.unsqueeze(0)
-            dt_raw = params[:, 0]
+            model = self.model.to(device)
+            model.eval()
+            with torch.no_grad():
+                params = model(feats)
+                if params.dim() == 1:
+                    params = params.unsqueeze(0)
+                dt_raw = params[:, 0]
 
-        dt_tensor = dt_raw + eps
-        dt_value = float(dt_tensor.squeeze(0).item())
+            dt_tensor = dt_raw + eps
+            dt_value = float(dt_tensor.squeeze(0).item())
         self.dt = dt_value
 
         if system is not None:
             for p in system:
                 p.dt = dt_value
             if push_history:
-                _maybe_push_history_state_system(hb, state, system)
+                if adapter is not None:
+                    adapter.update_history(state, history_buffer=hb, token=token)
+                else:
+                    _maybe_push_history_state_system(hb, state, system)
         else:
             if push_history:
-                _maybe_push_history_state(hb, state, self, secondary)
+                if adapter is not None:
+                    adapter.update_history(state, history_buffer=hb, token=token)
+                else:
+                    _maybe_push_history_state(hb, state, self, secondary)
 
         return dt_value
 
@@ -213,9 +249,17 @@ def predict_dt_from_model_system(
     eps: float = 1e-6,
     device: torch.device | None = None,
     feature_mode: str = "basic",
+    adapter: Optional[ModelAdapter] = None,
+    config: Optional[Config] = None,
 ):
     if device is None:
         device = torch.device("cpu")
+    if adapter is None and config is not None:
+        adapter = ModelAdapter(config, device=device)
+
+    if adapter is not None:
+        state = system_from_particles(system, device=adapter.device, dtype=adapter.dtype)
+        return adapter.predict_dt(model, state, eps=eps)
 
     state = system_from_particles(system, device=device, dtype=torch.double)
     feats = state.system_features(mode=feature_mode)
@@ -243,29 +287,41 @@ def predict_dt_from_history_model_system(
     eps: float = 1e-6,
     device: torch.device | None = None,
     push_history: bool = True,
+    adapter: Optional[ModelAdapter] = None,
+    config: Optional[Config] = None,
 ):
     if device is None:
         device = torch.device("cpu")
     if history_buffer is None:
         raise ValueError("history_buffer is required for history-based prediction")
+    if adapter is None and config is not None:
+        adapter = ModelAdapter(config, device=device)
 
-    state = _system_to_history_state(system, device=device)
-    feats = history_buffer.features_for(state)
-    if feats.dim() == 1:
-        feats = feats.unsqueeze(0)
-    feats = feats.to(device=device, dtype=torch.double)
+    if adapter is not None:
+        state = _system_to_history_state(system, device=adapter.device, dtype=adapter.dtype)
+        dt_value = float(adapter.predict_dt(model, state, history_buffer=history_buffer, eps=eps))
+    else:
+        state = _system_to_history_state(system, device=device)
+        feats = history_buffer.features_for(state)
+        if feats.dim() == 1:
+            feats = feats.unsqueeze(0)
+        feats = feats.to(device=device, dtype=torch.double)
 
-    model = model.to(device)
-    model.eval()
-    with torch.no_grad():
-        params = model(feats)
-        if params.dim() == 1:
-            params = params.unsqueeze(0)
-        dt_raw = params[:, 0]
+        model = model.to(device)
+        model.eval()
+        with torch.no_grad():
+            params = model(feats)
+            if params.dim() == 1:
+                params = params.unsqueeze(0)
+            dt_raw = params[:, 0]
 
-    dt_value = float((dt_raw + eps).squeeze(0).item())
+        dt_value = float((dt_raw + eps).squeeze(0).item())
     if push_history:
-        _maybe_push_history_state_system(history_buffer, state, system)
+        if adapter is not None:
+            token = tuple(float(p.current_time) for p in system)
+            adapter.update_history(state, history_buffer=history_buffer, token=token)
+        else:
+            _maybe_push_history_state_system(history_buffer, state, system)
     return dt_value
 
 
@@ -277,6 +333,8 @@ def predict_dt_from_model(
     device=None,
     system=None,
     feature_mode: str = "basic",
+    adapter: Optional[ModelAdapter] = None,
+    config: Optional[Config] = None,
 ):
     """
     Compute dt from a PyTorch model while inputs are NumPy arrays.
@@ -292,6 +350,8 @@ def predict_dt_from_model(
             eps=eps,
             device=device,
             feature_mode=feature_mode,
+            adapter=adapter,
+            config=config,
         )
     if p2 is None:
         raise ValueError("predict_dt_from_model requires both p1 and p2 or a system list")
@@ -302,6 +362,8 @@ def predict_dt_from_model(
         eps=eps,
         device=device,
         feature_mode=feature_mode,
+        adapter=adapter,
+        config=config,
     )
 
 def predict_dt_from_model_torch(
@@ -312,6 +374,8 @@ def predict_dt_from_model_torch(
     device=None,
     system=None,
     feature_mode: str = "basic",
+    adapter: Optional[ModelAdapter] = None,
+    config: Optional[Config] = None,
 ):
     """
     Predict dt using torch-based N-body system features.
@@ -325,6 +389,8 @@ def predict_dt_from_model_torch(
             eps=eps,
             device=device,
             feature_mode=feature_mode,
+            adapter=adapter,
+            config=config,
         )
     if p2 is None:
         raise ValueError("predict_dt_from_model_torch requires both p1 and p2 or a system list")
@@ -334,6 +400,8 @@ def predict_dt_from_model_torch(
         eps=eps,
         device=device,
         feature_mode=feature_mode,
+        adapter=adapter,
+        config=config,
     )
 
 def predict_dt_from_model_(
@@ -344,6 +412,8 @@ def predict_dt_from_model_(
     device=None,
     system=None,
     feature_mode: str = "basic",
+    adapter: Optional[ModelAdapter] = None,
+    config: Optional[Config] = None,
 ):
     """
     Legacy wrapper that forwards to N-body system features.
@@ -357,6 +427,8 @@ def predict_dt_from_model_(
             eps=eps,
             device=device,
             feature_mode=feature_mode,
+            adapter=adapter,
+            config=config,
         )
     if p2 is None:
         raise ValueError("predict_dt_from_model_ requires both p1 and p2 or a system list")
@@ -366,23 +438,31 @@ def predict_dt_from_model_(
         eps=eps,
         device=device,
         feature_mode=feature_mode,
+        adapter=adapter,
+        config=config,
     )
 
 
-def _system_to_history_state(particles: Sequence[Particle], device: torch.device) -> ParticleTorch:
+def _system_to_history_state(
+    particles: Sequence[Particle],
+    device: torch.device,
+    dtype: torch.dtype | None = None,
+) -> ParticleTorch:
+    if dtype is None:
+        dtype = torch.double
     pos = torch.tensor(
         np.stack([p.position for p in particles], axis=0),
-        dtype=torch.double,
+        dtype=dtype,
         device=device,
     )
     vel = torch.tensor(
         np.stack([p.velocity for p in particles], axis=0),
-        dtype=torch.double,
+        dtype=dtype,
         device=device,
     )
-    mass = torch.tensor([p.mass for p in particles], dtype=torch.double, device=device)
+    mass = torch.tensor([p.mass for p in particles], dtype=dtype, device=device)
     dt_value = min(p.dt for p in particles)
-    dt_tensor = torch.tensor(dt_value, dtype=torch.double, device=device)
+    dt_tensor = torch.tensor(dt_value, dtype=dtype, device=device)
     softening = max(p.softening for p in particles)
 
     state = ParticleTorch.from_tensors(
@@ -395,8 +475,13 @@ def _system_to_history_state(particles: Sequence[Particle], device: torch.device
     return state
 
 
-def _pair_to_history_state(primary: Particle, secondary: Particle, device: torch.device) -> ParticleTorch:
-    return _system_to_history_state([primary, secondary], device=device)
+def _pair_to_history_state(
+    primary: Particle,
+    secondary: Particle,
+    device: torch.device,
+    dtype: torch.dtype | None = None,
+) -> ParticleTorch:
+    return _system_to_history_state([primary, secondary], device=device, dtype=dtype)
 
 
 def _maybe_push_history_state(

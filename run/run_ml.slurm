@@ -46,4 +46,8 @@ echo "job is starting on `hostname`"
 
 #python3 ML_test.py
 
-python ML_history_wandb.py --epochs 2000 --n-steps 20 --history-len 20 --feature-type delta_mag --save-name test_history_logs --wandb-project AITimeStepper --wandb-name history_ml_mag_20
+#python ML_history_wandb.py --epochs 2000 --n-steps 20 --history-len 20 --feature-type delta_mag --save-name test_history_logs --wandb-project AITimeStepper --wandb-name history_ml_mag_20
+
+
+
+python ML_history_multi_wandb.py --epochs 2000 --num-orbits 8 --debug --n-steps 5 --history-len 5 --feature-type delta_mag --save-name test_history_multi_logs --wandb-project AITimeStepper --wandb-name history_ml_multi_5

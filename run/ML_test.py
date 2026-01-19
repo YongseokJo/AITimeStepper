@@ -206,12 +206,12 @@ for epoch in range(num_epochs):
     # example: save every 100 epochs
     if epoch % 100 == 0 or epoch == num_epochs - 1:
         save_checkpoint(
-            path=f"../data/model/epoch_{epoch:04d}.pt",
+            f"../data/model/epoch_{epoch:04d}.pt",
+            model,
+            optimizer,
             epoch=epoch,
-            model=model,
-            optimizer=optimizer,
             loss=loss,
-            info=logs,
+            logs=logs,
             extra={"n_steps": n_steps, "dt_bound": dt_bound, "rel_loss_bound": rel_loss_bound},
         )
 

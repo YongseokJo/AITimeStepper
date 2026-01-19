@@ -207,7 +207,9 @@ def save_checkpoint(
 
     state = {
         "epoch": epoch,
+        "model_state_dict": model.state_dict(),
         "model_state": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
         "optimizer_state": optimizer.state_dict(),
         "loss": loss.detach().cpu().item(),
         "info": info_out,

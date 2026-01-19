@@ -49,31 +49,14 @@ args = parser.parse_args()
 if isinstance(args.optimizer, str):
     args.optimizer = args.optimizer.strip().lower()
 
-# ===== Initialize Weights & Biases =====
-wandb.init(
-    project=args.wandb_project,
-    name=args.wandb_name,
-    config={
-        "input_size": 2,
-        "hidden_dims": [200, 1000, 1000, 200],
-        "output_size": 2,
-        "optimizer": args.optimizer,
-        "learning_rate": args.lr,
-        "momentum": args.momentum,
-        "weight_decay": args.weight_decay,
-        "activation": "tanh",
-        "dropout": 0.2,
-        "num_epochs": args.epochs,
-        "dt_bound": args.dt_bound,
-        "rel_loss_bound": args.rel_loss_bound,
-        "energy_threshold": args.energy_threshold,
-        "n_steps": args.n_steps,
-        "replay_batch_size": args.replay_batch,
-        "min_replay_size": args.min_replay_size,
-        "eccentricity": args.eccentricity,
-        "semi_major_axis": args.semi_major,
-    }
-)
+config = Config.from_dict(vars(args))
+config.replay_batch_size = getattr(args, "replay_batch", config.replay_batch_size)
+config.extra.update({
+    "activation": "tanh",
+    "dropout": 0.2,
+    "hidden_dims": [200, 1000, 1000, 200],
+    "output_size": 2,
+})
 
 dtype = torch.float32
 dtype = torch.double
@@ -82,7 +65,6 @@ torch.autograd.set_detect_anomaly(True)
 # Set the device to CUDA if available, otherwise CPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
-wandb.log({"device": str(device)})
 
 import random
 
@@ -97,14 +79,22 @@ particle.period       = torch.tensor(T, device=device, dtype=dtype)
 particle.current_time = torch.tensor(0, device=device, dtype=dtype)
 
 # Model configuration
-with torch.no_grad():
-    dummy_feat = particle.system_features(mode="basic")
-if dummy_feat.dim() == 1:
-    input_size = dummy_feat.numel()
-else:
-    input_size = dummy_feat.shape[-1]
+adapter = ModelAdapter(config, device=device, dtype=dtype)
+input_size = adapter.input_dim_from_state(particle)
 hidden_dim = [200, 1000, 1000, 200]
 output_size = 2
+
+config.extra["input_size"] = int(input_size)
+config.device = device.type
+config.dtype = "float64" if dtype == torch.double else "float32"
+
+# ===== Initialize Weights & Biases =====
+wandb.init(
+    project=args.wandb_project,
+    name=args.wandb_name,
+    config=config.as_wandb_dict(),
+)
+wandb.log({"device": str(device)})
 
 model = FullyConnectedNN(
     input_dim=input_size, 
@@ -401,12 +391,13 @@ for epoch in range(num_epochs):
     if epoch % 100 == 0 or epoch == num_epochs - 1:
         checkpoint_path = f"../data/model/epoch_{epoch:04d}.pt"
         save_checkpoint(
-            path=checkpoint_path,
+            checkpoint_path,
+            model,
+            optimizer,
             epoch=epoch,
-            model=model,
-            optimizer=optimizer,
             loss=loss,
-            info=logs,
+            logs=logs,
+            config=config,
             extra={"n_steps": n_steps, "dt_bound": dt_bound, "rel_loss_bound": rel_loss_bound},
         )
         

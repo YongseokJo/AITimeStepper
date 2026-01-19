@@ -53,7 +53,7 @@ def total_angular_momentum_com(p1, p2):
 
 
 
-def evolve_dt(p1, p2, eps, isML=False):
+def evolve_dt(p1, p2, eps, isML=False, adapter=None):
     """
     Advance the two-body system by one shared timestep using symplectic
     leapfrog / velocity-Verlet in kick-drift-kick form:
@@ -88,11 +88,11 @@ def evolve_dt(p1, p2, eps, isML=False):
             getattr(p2, "history_buffer", None) is not None
         )
         if uses_history:
-            dt1 = p1.update_dt_from_history_model(secondary=p2)
-            dt2 = p2.update_dt_from_history_model(secondary=p1)
+            dt1 = p1.update_dt_from_history_model(secondary=p2, adapter=adapter)
+            dt2 = p2.update_dt_from_history_model(secondary=p1, adapter=adapter)
         else:
-            dt1 = p1.update_dt_from_model(secondary=p2)
-            dt2 = p2.update_dt_from_model(secondary=p1)
+            dt1 = p1.update_dt_from_model(secondary=p2, adapter=adapter)
+            dt2 = p2.update_dt_from_model(secondary=p1, adapter=adapter)
         dt = min(dt1, dt2)
         prefix = "ML history dt =" if uses_history else "ML dt ="
         #print(prefix, dt)

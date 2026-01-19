@@ -17,53 +17,72 @@ from simulators.two_body_simulator import (
     total_momentum as total_momentum_two_body,
     total_angular_momentum_com as total_angular_momentum_com_two_body,
 )
-from src import FullyConnectedNN, HistoryBuffer, ParticleTorch
+from src import (
+    Config,
+    FullyConnectedNN,
+    HistoryBuffer,
+    ParticleTorch,
+    load_config_from_checkpoint,
+    load_model_state,
+    ModelAdapter,
+)
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print("Using device:", device)
+device = None
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dt", type=float, default=-1,
-                    help="Time step for integrator")
-parser.add_argument("--steps", type=int, default=-1,
-                    help="Number of steps to evolve per period")
-parser.add_argument("--Nperiod", type=int, default=10,
-                    help="Number of period")
-parser.add_argument("--e", type=float, default=0.7,
-                    help="Eccentricity")
-parser.add_argument("--a", type=float, default=1.0,
-                    help="Semi-major axis")
-parser.add_argument("--eps", type=float, default=0.1,
-                    help="time constant for dt update")
+Config.add_cli_args(
+    parser,
+    include=["sim", "orbit", "device", "logging"],
+)
 parser.add_argument("--ML", action="store_true", default=False,
-                    help="Use machine learning–based timestep" )
-parser.add_argument("--save-name", "-s", type=str, default=None,
-                    help="base name (directory) under data/ to save outputs")
-parser.add_argument("--model-path", type=str,
-                    default=str(project_root / "data" / "model" / "epoch_0399.pt"),
-                    help="Path to the model checkpoint to load (torch .pt)")
-parser.add_argument("--history-len", type=int, default=0,
+                    help="Use machine learning–based timestep")
+parser.add_argument("--history-len", type=int, default=Config.history_len,
                     help="Length of history (in steps) for history-aware ML model")
-parser.add_argument("--history-feature-type", choices=["basic", "rich", "delta_mag"], default="delta_mag",
+parser.add_argument("--history-feature-type", "--feature-type", dest="feature_type",
+                    choices=["basic", "rich", "delta_mag"], default=Config.feature_type,
                     help="HistoryBuffer feature type used during training")
+parser.add_argument("--no-movie", action="store_true",
+                    help="Disable movie rendering (skip ffmpeg)")
+parser.set_defaults(model_path=str(project_root / "data" / "model" / "epoch_0399.pt"))
 args = parser.parse_args()
-dt = args.dt
-steps_per_period = args.steps
-Nperiod = args.Nperiod
-e = args.e
-a = args.a
-eps = args.eps
-isML = args.ML
-history_len = max(0, args.history_len)
-history_feature_type = args.history_feature_type
+config = Config.from_dict(vars(args))
+config.validate()
+if config.model_path:
+    try:
+        ckpt_config = load_config_from_checkpoint(config.model_path)
+    except Exception:
+        ckpt_config = None
+    if ckpt_config is not None:
+        if config.history_len == 0 and ckpt_config.history_len:
+            config.history_len = ckpt_config.history_len
+        if config.feature_type == Config.feature_type and ckpt_config.feature_type:
+            config.feature_type = ckpt_config.feature_type
+        if config.dtype == Config.dtype and ckpt_config.dtype:
+            config.dtype = ckpt_config.dtype
+
+dt = config.dt
+steps_per_period = config.steps
+Nperiod = config.Nperiod
+e = config.eccentricity
+a = config.semi_major
+eps = config.eps
+isML = args.ML or config.integrator_mode in ("ml", "history")
+history_len = max(0, config.history_len)
+history_feature_type = config.feature_type
 history_buffer = None
+
+device = config.resolve_device()
+dtype = config.resolve_dtype()
+config.apply_torch_settings(device)
+print("Using device:", device)
+adapter = ModelAdapter(config, device=device, dtype=dtype)
 
 if isML:
     suffix = f"e{e}_a{a}_ML"
 else:
     suffix = f"e{e}_eps{eps}"
-save_name = args.save_name if args.save_name is not None else suffix
+save_name = config.save_name if config.save_name is not None else suffix
 print(save_name)
 
 # prepare output directories under data/<save_name>/plot and /movie
@@ -83,25 +102,15 @@ p1, p2, T = generate_IC(e=e, a=a, dt=dt)
 if isML:
     # 1. Rebuild the model and load weights
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    state = system_from_particles([p1, p2], device=device, dtype=torch.double)
+    state = system_from_particles([p1, p2], device=device, dtype=dtype)
     if history_len > 0:
-        history_buffer = HistoryBuffer(
+        history_buffer = adapter.history_buffer or HistoryBuffer(
             history_len=history_len,
             feature_type=history_feature_type,
         )
-        with torch.no_grad():
-            dummy_feat = history_buffer.features_for(state)
-        if dummy_feat.dim() == 1:
-            input_size = dummy_feat.numel()
-        else:
-            input_size = dummy_feat.shape[-1]
+        input_size = adapter.input_dim_from_state(state, history_buffer=history_buffer)
     else:
-        with torch.no_grad():
-            dummy_feat = state.system_features(mode="basic")
-        if dummy_feat.dim() == 1:
-            input_size = dummy_feat.numel()
-        else:
-            input_size = dummy_feat.shape[-1]
+        input_size = adapter.input_dim_from_state(state)
     #hidden_dim = [8,32,8]     # Number of hidden neurons
     hidden_dim = [200,1000, 1000, 200]     # Number of hidden neurons
     output_size = 2     # Number of output two time steps
@@ -112,10 +121,9 @@ if isML:
                             dropout=0.2, output_positive=True).to(device)
 
     # load checkpoint from CLI-provided path
-    model_path = args.model_path
-    ckpt = torch.load(model_path, map_location=device)
-    model.load_state_dict(ckpt["model_state_dict"])
-    model = model.to(torch.double)
+    model_path = config.model_path
+    load_model_state(model, model_path, map_location=device)
+    model = model.to(dtype)
     print("Loaded ML model for dt prediction.")
 
     p1.update_model(model, device)
@@ -137,11 +145,11 @@ else:
 if isML:
     use_history_model = history_len > 0 and history_buffer is not None
     if use_history_model:
-        p1.update_dt_from_history_model(p2)
-        p2.update_dt_from_history_model(p1)
+        p1.update_dt_from_history_model(p2, history_buffer=history_buffer, adapter=adapter)
+        p2.update_dt_from_history_model(p1, history_buffer=history_buffer, adapter=adapter)
     else:
-        p1.update_dt_from_model(p2)
-        p2.update_dt_from_model(p1)
+        p1.update_dt_from_model(p2, adapter=adapter)
+        p2.update_dt_from_model(p1, adapter=adapter)
 else:
     p1.dt = dt
     p2.dt = dt
@@ -163,7 +171,7 @@ angular_momenta = []
 steps = 0
 current_dt = 0.0
 while current_dt < final_time:
-    evolve_dt(p1, p2, eps, isML=isML)
+    evolve_dt(p1, p2, eps, isML=isML, adapter=adapter)
     #print(p1, p2)
 
     traj1.append(p1.position.copy())
@@ -396,10 +404,9 @@ ani = animation.FuncAnimation(
 
 from matplotlib.animation import FFMpegWriter
 writer = FFMpegWriter(fps=30, bitrate=1800)
-ani.save(str(movie_dir / f"two_body_movie_{save_name}.mp4"), writer=writer, dpi=120)
+if not args.no_movie:
+    ani.save(str(movie_dir / f"two_body_movie_{save_name}.mp4"), writer=writer, dpi=120)
 plt.close(fig)
-
-raise
 
 # ── set up figure with 3 panels ────────────────────────
 fig = plt.figure(figsize=(10, 5))
@@ -558,5 +565,6 @@ ani = animation.FuncAnimation(
 
 from matplotlib.animation import FFMpegWriter
 writer = FFMpegWriter(fps=30, bitrate=1800)
-ani.save(f"../data/movie/two_body_movie_{suffix}.mp4", writer=writer, dpi=120)
+if not args.no_movie:
+    ani.save(f"../data/movie/two_body_movie_{suffix}.mp4", writer=writer, dpi=120)
 plt.close(fig)
