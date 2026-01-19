@@ -141,3 +141,4 @@ rclone/rclone
 *.swp
 *.last_run_code
 
+.AGENTS.md

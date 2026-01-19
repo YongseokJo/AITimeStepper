@@ -11,13 +11,9 @@ python -V
 which python
 
 
-#python3 simulator_test.py --e 0.9 --ML
-#python3 simulator_test.py --e=0.9 --a=1 --ML
-#python3 simulator_test.py --e=0.3 --a=1 --ML
-#python3 simulator_test.py --e=0.9 --a=0.5 --ML
+#python3 run/runner.py simulate --integrator-mode ml --model-path "$MODEL_PATH"
 
 MODEL_PATH="/u/gkerex/projects/AITimeStepper/data/test_history_logs/model/model_epoch_1000.pt"
 
 
-python simulator_test.py --ML --model-path=$MODEL_PATH --history-len 5 --a=1 --e=0.9 --save-name="history_test"
-
+python run/runner.py simulate --integrator-mode history --model-path=$MODEL_PATH --history-len 5 --num-particles 4 --steps 500 --save-name="history_test"

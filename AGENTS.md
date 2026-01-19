@@ -10,9 +10,9 @@
 
 ## Build, Test, and Development Commands
 - `python -c "import torch, numpy, matplotlib, wandb"` — quick import sanity check for the environment.
-- `python run/simulator_test.py` — two-body simulator sanity run (plots + optional movie output).
+- `python run/runner.py simulate --num-particles 3 --steps 200` — N-body simulator sanity run (JSON summary).
 - `python run/ML_history_wandb.py --epochs 1000 --n-steps 10 --history-len 3 --feature-type basic` — trains the history-aware time-stepper with W&B logging.
-- `python run/ML_test.py` or `python run/ML_history_wandb.py --debug ...` — local evaluation/debugging scripts.
+- `python run/runner.py train --epochs 2 --n-steps 2 --history-len 3 --num-particles 4` — quick local evaluation/debugging run.
 - `bash optuna/run.sh` — launch Optuna sweeps (adapt to your environment/cluster).
 
 ## Coding Style & Naming Conventions

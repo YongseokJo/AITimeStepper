@@ -5,6 +5,32 @@ from typing import Callable, Optional, Sequence
 import numpy as np
 
 from .particle import Particle, predict_dt_from_model_system, predict_dt_from_history_model_system
+from src.config import Config
+from src.model_adapter import ModelAdapter
+
+
+def generate_random_ic(
+    num_particles: int,
+    dim: int = 2,
+    mass: float | np.ndarray = 1.0,
+    pos_scale: float = 0.1,
+    vel_scale: float = 1.0,
+    seed: Optional[int] = None,
+) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    pos = rng.normal(scale=pos_scale, size=(num_particles, dim))
+    vel = rng.normal(scale=vel_scale, size=(num_particles, dim))
+    pos = pos - pos.mean(axis=0, keepdims=True)
+    vel = vel - vel.mean(axis=0, keepdims=True)
+    if np.isscalar(mass):
+        masses = np.full((num_particles, 1), float(mass))
+    else:
+        mass_arr = np.asarray(mass, dtype=float).reshape(-1)
+        if mass_arr.shape[0] != num_particles:
+            raise ValueError("mass array length must match num_particles")
+        masses = mass_arr[:, None]
+    ptcls = np.concatenate([masses, pos, vel], axis=1)
+    return ptcls
 
 
 def _stack_system(particles: Sequence[Particle]):
@@ -122,6 +148,9 @@ def evolve_particles_ml(
     feature_mode: str = "basic",
     eps: float = 1e-6,
     G: float = 1.0,
+    adapter: Optional[ModelAdapter] = None,
+    config: Optional[Config] = None,
+    external_acceleration: Optional[Callable[[np.ndarray, float], np.ndarray]] = None,
 ):
     """
     N-body evolution using ML-predicted dt (history-aware if provided).
@@ -133,6 +162,8 @@ def evolve_particles_ml(
             history_buffer=history_buffer,
             eps=eps,
             device=getattr(particles[0], "device", None),
+            adapter=adapter,
+            config=config,
         )
     else:
         dt = predict_dt_from_model_system(
@@ -141,11 +172,18 @@ def evolve_particles_ml(
             eps=eps,
             device=getattr(particles[0], "device", None),
             feature_mode=feature_mode,
+            adapter=adapter,
+            config=config,
         )
 
     for p in particles:
         p.dt = dt
-    return evolve_particles(particles, dt=dt, G=G)
+    return evolve_particles(
+        particles,
+        dt=dt,
+        G=G,
+        external_acceleration=external_acceleration,
+    )
 
 
 def total_energy(positions, velocities, masses, softening: float = 0.0, G: float = 1.0):

@@ -17,7 +17,6 @@ print(f"Project root: {project_root}")
 from src import (
     Config,
     FullyConnectedNN,
-    generate_IC,
     make_particle,
     stack_particles,
     loss_fn_batch,
@@ -27,15 +26,16 @@ from src import (
     save_checkpoint,
     ModelAdapter,
 )
+from simulators.nbody_simulator import generate_random_ic
 
 
 parser = argparse.ArgumentParser(description="History-aware ML time-step predictor with W&B logging")
 Config.add_cli_args(
     parser,
-    include=["train", "bounds", "orbit", "history", "device", "logging"],
+    include=["train", "bounds", "history", "device", "logging", "sim"],
 )
 parser.add_argument("--wandb-project", type=str, default="AITimeStepper", help="W&B project name")
-parser.add_argument("--wandb-name", type=str, default="two_body_ML_integrator_history", help="W&B run name")
+parser.add_argument("--wandb-name", type=str, default="nbody_ML_integrator_history", help="W&B run name")
 parser.add_argument("--optuna", action="store_true", help="optuna mode: print final metrics as JSON to stdout")
 args = parser.parse_args()
 config = Config.from_dict(vars(args))
@@ -93,7 +93,15 @@ os.makedirs(log_out, exist_ok=True)
 
 wandb.log({"save/base_out": str(base_out)})
 
-ptcls, T = generate_IC(e=config.eccentricity, a=config.semi_major)
+ptcls = generate_random_ic(
+    num_particles=config.num_particles,
+    dim=config.dim,
+    mass=config.mass,
+    pos_scale=config.pos_scale,
+    vel_scale=config.vel_scale,
+    seed=config.seed,
+)
+T = 1.0
 # attempt to place tensors on the chosen device; on failure, fall back to CPU
 try:
     ptcls = torch.tensor(ptcls, device=device, dtype=dtype)

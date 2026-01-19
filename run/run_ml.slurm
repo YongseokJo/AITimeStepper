@@ -42,9 +42,9 @@ which python
 #echo "Running array task $SLURM_ARRAY_TASK_ID with dt=$dt"
 
 echo "job is starting on `hostname`"
-#srun python3 simulator_test.py
+#srun python3 run/runner.py simulate
 
-#python3 ML_test.py
+#python3 run/runner.py train
 
 #python ML_history_wandb.py --epochs 2000 --n-steps 20 --history-len 20 --feature-type delta_mag --save-name test_history_logs --wandb-project AITimeStepper --wandb-name history_ml_mag_20
 

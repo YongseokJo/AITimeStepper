@@ -17,7 +17,6 @@ print(f"Project root: {project_root}")
 from src import (
     Config,
     FullyConnectedNN,
-    generate_IC,
     make_particle,
     stack_particles,
     loss_fn_batch_history_batch,
@@ -25,16 +24,17 @@ from src import (
     save_checkpoint,
     ModelAdapter,
 )
+from simulators.nbody_simulator import generate_random_ic
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="History-aware ML time-step predictor with batched multi-orbit training")
     Config.add_cli_args(
         parser,
-        include=["train", "bounds", "history", "device", "logging", "multi"],
+        include=["train", "bounds", "history", "device", "logging", "multi", "sim"],
     )
     parser.add_argument("--wandb-project", type=str, default="AITimeStepper", help="W&B project name")
-    parser.add_argument("--wandb-name", type=str, default="two_body_ML_integrator_history_multi", help="W&B run name")
+    parser.add_argument("--wandb-name", type=str, default="nbody_ML_integrator_history_multi", help="W&B run name")
     parser.add_argument("--optuna", action="store_true", help="optuna mode: print final metrics as JSON to stdout")
     return parser.parse_args()
 
@@ -136,9 +136,16 @@ def main():
     histories = []
     orbit_meta = []
     for i in range(config.num_orbits):
-        e_i = float(np.random.uniform(config.e_min, config.e_max))
-        a_i = float(np.random.uniform(config.a_min, config.a_max))
-        ptcls, T_i = generate_IC(e=e_i, a=a_i)
+        seed_i = (config.seed or 0) + i
+        ptcls = generate_random_ic(
+            num_particles=config.num_particles,
+            dim=config.dim,
+            mass=config.mass,
+            pos_scale=config.pos_scale,
+            vel_scale=config.vel_scale,
+            seed=seed_i,
+        )
+        T_i = 1.0
         try:
             ptcls_t = torch.tensor(ptcls, device=device, dtype=dtype)
         except RuntimeError as exc:
@@ -152,7 +159,7 @@ def main():
         hb.push(particle.clone_detached())
         particles.append(particle)
         histories.append(hb)
-        orbit_meta.append({"e": e_i, "a": a_i, "T": float(T_i)})
+        orbit_meta.append({"seed": seed_i, "T": float(T_i)})
 
     batch_state_init = stack_particles(particles)
     input_dim = adapter.input_dim_from_state(batch_state_init, histories=histories)

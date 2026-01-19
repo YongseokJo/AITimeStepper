@@ -37,10 +37,16 @@ class Config:
     integrator_mode: str = "analytic"
     dt: float = -1.0
     steps: int = -1
+    duration: float | None = None
     Nperiod: int = 10
     eccentricity: float = 0.9
     semi_major: float = 1.0
     eps: float = 0.1
+    num_particles: int = 2
+    dim: int = 2
+    mass: float = 1.0
+    pos_scale: float = 0.1
+    vel_scale: float = 1.0
 
     # External field (optional)
     external_field_mass: Optional[float] = None
@@ -60,7 +66,7 @@ class Config:
     compile: bool = False
     detect_anomaly: bool = False
 
-    # Optimizer phases (ML_test_wandb)
+    # Optimizer phases
     adam_epochs: int = 0
     adam_lr: Optional[float] = None
     lbfgs_lr: float = 1.0
@@ -153,10 +159,16 @@ class Config:
         if want("sim"):
             add_arg("--dt", type=float, default=cls.dt, help="Time step for integrator")
             add_arg("--steps", type=int, default=cls.steps, help="Number of steps to evolve per period")
+            add_arg("--duration", type=float, default=cls.duration, help="simulation or training duration in seconds")
             add_arg("--Nperiod", type=int, default=cls.Nperiod, help="Number of period")
             add_arg("--eps", type=float, default=cls.eps, help="time constant for dt update")
             add_arg("--integrator-mode", type=str, choices=["analytic", "ml", "history"], default=cls.integrator_mode)
             add_arg("--model-path", type=str, default=cls.model_path, help="Path to the model checkpoint to load")
+            add_arg("--num-particles", type=int, default=cls.num_particles, help="number of particles in the system")
+            add_arg("--dim", type=int, default=cls.dim, help="spatial dimension")
+            add_arg("--mass", type=float, default=cls.mass, help="per-particle mass for random ICs")
+            add_arg("--pos-scale", type=float, default=cls.pos_scale, help="position scale for random ICs")
+            add_arg("--vel-scale", type=float, default=cls.vel_scale, help="velocity scale for random ICs")
 
         if want("external"):
             add_arg("--external-field-mass", type=float, default=cls.external_field_mass, help="external field mass")
@@ -226,6 +238,12 @@ class Config:
     def validate(self) -> None:
         if self.history_len and self.history_len > 0 and not self.feature_type:
             raise ValueError("history_len > 0 requires feature_type")
+        if self.num_particles is not None and self.num_particles < 2:
+            raise ValueError("num_particles must be >= 2")
+        if self.dim is not None and self.dim < 1:
+            raise ValueError("dim must be >= 1")
+        if self.duration is not None and self.duration < 0:
+            raise ValueError("duration must be >= 0")
 
     def resolve_device(self) -> torch.device:
         if isinstance(self.device, torch.device):

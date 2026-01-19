@@ -42,19 +42,16 @@ eps=${epss[$SLURM_ARRAY_TASK_ID]}
 #echo "Running array task $SLURM_ARRAY_TASK_ID with dt=$dt"
 
 echo "job is starting on `hostname`"
-#srun python3 simulator_test.py
+#srun python3 run/runner.py simulate
 
-#python3 simulator_test.py --dt "$dt" --e 0.9 --steps 
-#python3 simulator_test.py --e 0.9 --steps "$step"
-#python3 simulator_test.py --e 0.9 --eps "$eps" --Nperiod 10
-#python3 simulator_test.py --e 0.7 --ML
-#python3 simulator_test.py --e 0.9 --ML
+#python3 run/runner.py simulate --dt "$dt" --steps "$step"
+#python3 run/runner.py simulate --eps "$eps" --steps 200
+#python3 run/runner.py simulate --integrator-mode ml --model-path "$MODEL_PATH"
 
 #MODEL_PATH="/u/gkerex/projects/AITimeStepper/data/test_history_logs/model/model_epoch_0250.pt"
-#python simulator_test.py --ML --model-path=$MODEL_PATH --history-len 5 --a=1 --e=0.9 --save-name="history_test_dL"
+#python run/runner.py simulate --integrator-mode history --model-path=$MODEL_PATH --history-len 5 --num-particles 4 --steps 500 --save-name="history_test_dL"
 
 #MODEL_PATH="/u/gkerex/projects/AITimeStepper/data/test_history_logs/model/model_epoch_0200.pt"
-#python simulator_test.py --ML --model-path=$MODEL_PATH --history-len 20 --a=1 --e=0.9 --save-name="history_test_dL_20_1" --history-feature-type delta_mag
+#python run/runner.py simulate --integrator-mode history --model-path=$MODEL_PATH --history-len 20 --num-particles 4 --steps 500 --save-name="history_test_dL_20_1"
 MODEL_PATH="/u/gkerex/projects/AITimeStepper/data/test_history_multi_logs/model/model_epoch_0100.pt"
-python simulator_test.py --ML --model-path=$MODEL_PATH --history-len 5 --a=1 --e=0.9 --save-name="history_test_dL_5_multi" --history-feature-type delta_mag
-
+python run/runner.py simulate --integrator-mode history --model-path=$MODEL_PATH --history-len 5 --num-particles 8 --steps 500 --save-name="history_test_dL_5_multi"

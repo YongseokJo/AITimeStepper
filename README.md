@@ -30,10 +30,10 @@ python -c "import torch, numpy, matplotlib, wandb"
 
 ## Quick runs
 
-### 1) Two-body / simulator sanity
+### 1) N-body simulator sanity
 
 ```bash
-python run/simulator_test.py
+python run/runner.py simulate --num-particles 3 --steps 200
 ```
 
 ### 2) Train the history-aware time-stepper (W&B)
@@ -56,7 +56,54 @@ python run/ML_history_wandb.py --debug --debug-every 1 --debug-replay-every 10
 
 ### 3) Run Optuna sweeps
 
-See `optuna/main.py` and `optuna/run.sh` for the current sweep entrypoints.
+See `optuna/main.py` and `run/run_optuna.sh` for the current sweep entrypoints.
+
+## Unified runner (single entrypoint)
+
+Use `run/runner.py` for both training and simulation with the shared `Config`.
+
+### Train (N-body)
+
+```bash
+python run/runner.py train --epochs 200 --n-steps 5 --num-particles 4 --save-name nbody_run
+```
+
+### Train (history-aware)
+
+```bash
+python run/runner.py train --epochs 200 --n-steps 5 --history-len 5 --feature-type delta_mag --num-particles 4 --save-name nbody_history_run
+```
+
+### Simulate (analytic)
+
+```bash
+python run/runner.py simulate --num-particles 4 --steps 500
+```
+
+### Simulate (ML dt)
+
+```bash
+python run/runner.py simulate --integrator-mode ml --model-path data/<save>/model/model_epoch_XXXX.pt --num-particles 4 --steps 500
+```
+
+### Simulate (history ML)
+
+```bash
+python run/runner.py simulate --integrator-mode history --model-path data/<save>/model/model_epoch_XXXX.pt --history-len 5 --feature-type delta_mag --num-particles 4 --steps 500
+```
+
+### Duration-based runs
+
+```bash
+python run/runner.py simulate --num-particles 4 --duration 0.05
+python run/runner.py train --epochs 1000 --duration 60
+```
+
+### External field
+
+```bash
+python run/runner.py simulate --external-field-mass 5.0 --external-field-position 10 0 0 --num-particles 4 --steps 200
+```
 
 ## Analytic tidal potential (external field)
 
