@@ -32,9 +32,9 @@ Requirements for the two-phase training routine refactor.
 
 ### Integration
 
-- [ ] **INTG-01**: Replace existing training routine in runner.py
-- [ ] **INTG-02**: Remove old training loop code
-- [ ] **INTG-03**: Maintain checkpoint compatibility with simulation mode
+- [x] **INTG-01**: Replace existing training routine in runner.py
+- [x] **INTG-02**: Remove old training loop code
+- [x] **INTG-03**: Maintain checkpoint compatibility with simulation mode
 
 ## v2 Requirements
 
@@ -74,7 +74,7 @@ Deferred to future work.
 | CONF-02 | Phase 1 | **DONE** |
 | CONF-03 | Phase 1 | **DONE** |
 | INTG-01 | Phase 6 | **DONE** |
-| INTG-02 | Phase 7 | Pending |
+| INTG-02 | Phase 7 | **DONE** |
 | INTG-03 | Phase 6 | **DONE** |
 
 **Coverage:**

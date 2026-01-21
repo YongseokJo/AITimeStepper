@@ -174,8 +174,10 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
-- [ ] 07-01-PLAN.md — Remove unused imports from runner.py and delete legacy scripts
-- [ ] 07-02-PLAN.md — Add deprecation notices to loss functions and trainer.py
+- [x] 07-01-PLAN.md — Remove unused imports from runner.py and delete legacy scripts
+- [x] 07-02-PLAN.md — Add deprecation notices to loss functions and trainer.py
+
+**Completed:** 2026-01-21
 
 ---
 

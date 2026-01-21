@@ -1,8 +1,8 @@
 # STATE: AITimeStepper Training Refactor
 
 **Initialized:** 2026-01-20
-**Current Phase:** 7 (pending)
-**Overall Progress:** 6/7 phases complete
+**Current Phase:** MILESTONE COMPLETE
+**Overall Progress:** 7/7 phases complete
 
 ---
 
@@ -16,19 +16,35 @@
 | 4. Part 2: Generalization Training | **DONE** | 2/2 | Core functions and tests complete, verified |
 | 5. Unified Epoch Structure | **DONE** | 3/3 | Epoch orchestrator, outer loop, and tests complete |
 | 6. Integration into runner.py | **DONE** | 2/2 | run_training() refactored, integration tests added |
-| 7. Cleanup Legacy Code | Pending | 0/2 | Remove old training loop |
+| 7. Cleanup Legacy Code | **DONE** | 2/2 | Removed unused imports, deleted legacy scripts, added deprecation notices |
 
 ---
 
 ## Current Work
 
-**Phase:** 7 (pending)
-**Plan:** Not started
-**Status:** Phase 6 complete, ready for cleanup
+**Phase:** MILESTONE COMPLETE
+**Plan:** N/A
+**Status:** All 7 phases complete. v1.0 Two-Phase Training System ready.
 
 ---
 
 ## Completed Work
+
+### Phase 7: Cleanup Legacy Code (2026-01-21, COMPLETE)
+- **PLAN-07-01**: Remove unused imports and delete legacy scripts
+  - Removed `loss_fn_batch`, `loss_fn_batch_history`, `loss_fn_batch_history_batch` imports from runner.py
+  - Deleted `run/legacy/` directory with 4 scripts (ML_history_wandb.py, ML_history_multi_wandb.py, integration_sanity.py, tidal_sanity.py)
+  - All scripts replaced by `run/runner.py train` command
+  - Commit: 12bd761
+
+- **PLAN-07-02**: Add deprecation notices to loss functions and trainer.py
+  - Added deprecation docstrings to `loss_fn`, `loss_fn_1`, `loss_fn_batch` in src/losses.py
+  - Added deprecation docstrings to `loss_fn_batch_history`, `loss_fn_batch_history_batch` in src/losses_history.py
+  - Added module-level deprecation header to src/trainer.py
+  - `band_loss_zero_inside_where` unchanged (actively used by new system)
+  - Commit: 12bd761
+
+- **Verification**: All 5 success criteria met, INTG-02 requirement satisfied
 
 ### Phase 6: Integration into runner.py (2026-01-21, COMPLETE)
 - **PLAN-06-01**: Refactor run_training() to use run_two_phase_training()
