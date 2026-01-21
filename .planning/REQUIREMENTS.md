@@ -26,9 +26,9 @@ Requirements for the two-phase training routine refactor.
 
 ### Configuration
 
-- [ ] **CONF-01**: Energy threshold as configurable parameter
-- [ ] **CONF-02**: Steps per epoch as configurable parameter
-- [ ] **CONF-03**: Total epochs as configurable parameter
+- [x] **CONF-01**: Energy threshold as configurable parameter
+- [x] **CONF-02**: Steps per epoch as configurable parameter
+- [x] **CONF-03**: Total epochs as configurable parameter
 
 ### Integration
 
@@ -70,9 +70,9 @@ Deferred to future work.
 | TRAIN-09 | Phase 5 | Pending |
 | HIST-01 | Phase 2 | Pending |
 | HIST-02 | Phase 2 | Pending |
-| CONF-01 | Phase 1 | Pending |
-| CONF-02 | Phase 1 | Pending |
-| CONF-03 | Phase 1 | Pending |
+| CONF-01 | Phase 1 | **DONE** |
+| CONF-02 | Phase 1 | **DONE** |
+| CONF-03 | Phase 1 | **DONE** |
 | INTG-01 | Phase 6 | Pending |
 | INTG-02 | Phase 7 | Pending |
 | INTG-03 | Phase 6 | Pending |

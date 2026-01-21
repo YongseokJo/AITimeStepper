@@ -1,8 +1,8 @@
 # STATE: AITimeStepper Training Refactor
 
 **Initialized:** 2026-01-20
-**Current Phase:** Not started
-**Overall Progress:** 0/7 phases complete
+**Current Phase:** 1 (completed)
+**Overall Progress:** 1/7 phases complete
 
 ---
 
@@ -10,7 +10,7 @@
 
 | Phase | Status | Plans Complete | Notes |
 |-------|--------|----------------|-------|
-| 1. Configuration Parameters | Pending | 0/3 | Add energy_threshold, steps_per_epoch to Config |
+| 1. Configuration Parameters | **DONE** | 2/2 | Added steps_per_epoch, validation for training params |
 | 2. History Buffer Zero-Padding | Pending | 0/3 | Replace oldest-state padding with zero-padding |
 | 3. Part 1: Trajectory Collection | Pending | 0/5 | Implement accept/reject loop |
 | 4. Part 2: Generalization Training | Pending | 0/4 | Train on minibatches until convergence |
@@ -22,15 +22,19 @@
 
 ## Current Work
 
-**Phase:** None
-**Plan:** None
-**Status:** Awaiting start
+**Phase:** 1 (completed)
+**Plan:** All plans executed
+**Status:** Ready for Phase 2
 
 ---
 
 ## Completed Work
 
-None yet.
+### Phase 1: Configuration Parameters (2026-01-20)
+- **PLAN-01**: Added `steps_per_epoch: int = 1` field and `--steps-per-epoch` CLI argument
+- **PLAN-02**: Added validation for `epochs >= 1`, `steps_per_epoch >= 1`, `energy_threshold > 0`
+- **Commit**: 33b4a9f
+- **Research finding**: `energy_threshold` already existed (default 2e-4), only `steps_per_epoch` needed adding
 
 ---
 
