@@ -146,14 +146,13 @@ Plans:
 3. Checkpoint contract preserved - simulation mode loads checkpoints correctly
 4. CLI interface unchanged for end users
 5. W&B logging maintains compatibility with existing dashboards
-6. Multi-orbit support preserved (batched training)
+6. Multi-orbit warning issued (graceful degradation for unsupported feature)
 
-**Estimated Plans:** 4-5
-- Refactor run_training() to call new epoch function
-- Preserve ModelAdapter and device/dtype logic
-- Test with history-enabled and analytic modes
-- Test multi-orbit batching
-- Verify checkpoint backward compatibility
+**Plans:** 2 plans
+
+Plans:
+- [ ] 06-01-PLAN.md — Refactor run_training() to use run_two_phase_training()
+- [ ] 06-02-PLAN.md — Integration tests for CLI, checkpoints, and multi-orbit warning
 
 ---
 
@@ -251,4 +250,4 @@ Phase 6 (Integration) → Phase 7 (Cleanup)
 ---
 
 *Roadmap created: 2026-01-20*
-*Last updated: 2026-01-21 (Phase 5 complete)*
+*Last updated: 2026-01-21 (Phase 6 planned)*
