@@ -251,6 +251,22 @@ class HistoryBuffer:
             return _HistoryState(pos, vel, mass, dt, state.softening)
         raise ValueError(f"Cannot expand history state of shape {pos.shape} to batch {batch_size}")
 
+    @staticmethod
+    def _zero_state(reference: _HistoryState) -> _HistoryState:
+        """
+        Create a zero-valued _HistoryState with the same shape, device, dtype,
+        and softening as the reference state.
+
+        Used for zero-padding incomplete history during bootstrap phase.
+        """
+        return _HistoryState(
+            position=torch.zeros_like(reference.position),
+            velocity=torch.zeros_like(reference.velocity),
+            mass=torch.zeros_like(reference.mass),
+            dt=torch.zeros_like(reference.dt),
+            softening=reference.softening,
+        )
+
     def features_for(self, current: "ParticleTorch") -> torch.Tensor:
         """
         Build concatenated features over time: [past...past, current].
