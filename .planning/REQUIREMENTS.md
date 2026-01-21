@@ -21,7 +21,7 @@ Requirements for the two-phase training routine refactor.
 
 ### History Handling
 
-- [ ] **HIST-01**: Pad history with zeros for initial steps (not repeat first state)
+- [x] **HIST-01**: Pad history with zeros for initial steps (not repeat first state)
 - [ ] **HIST-02**: Discard warmup steps once real trajectory exists
 
 ### Configuration
@@ -68,8 +68,8 @@ Deferred to future work.
 | TRAIN-07 | Phase 4 | Pending |
 | TRAIN-08 | Phase 5 | Pending |
 | TRAIN-09 | Phase 5 | Pending |
-| HIST-01 | Phase 2 | Pending |
-| HIST-02 | Phase 2 | Pending |
+| HIST-01 | Phase 2 | **DONE** |
+| HIST-02 | Phase 3 | Pending |
 | CONF-01 | Phase 1 | **DONE** |
 | CONF-02 | Phase 1 | **DONE** |
 | CONF-03 | Phase 1 | **DONE** |

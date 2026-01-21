@@ -35,7 +35,7 @@ Each epoch combines both parts. Training converges when all samples pass energy 
 
 ---
 
-## Phase 2: History Buffer Zero-Padding
+## Phase 2: History Buffer Zero-Padding ✓
 
 **Goal:** Replace oldest-state padding with zero-padding for history bootstrap (HIST-01)
 
@@ -51,8 +51,10 @@ Each epoch combines both parts. Training converges when all samples pass energy 
 **Plans:** 2 plans
 
 Plans:
-- [ ] 02-01-PLAN.md — Add _zero_state() method and modify features_for()
-- [ ] 02-02-PLAN.md — Modify features_for_batch() and features_for_histories()
+- [x] 02-01-PLAN.md — Add _zero_state() method and modify features_for()
+- [x] 02-02-PLAN.md — Modify features_for_batch() and features_for_histories()
+
+**Completed:** 2026-01-20
 
 ---
 
