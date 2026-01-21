@@ -462,3 +462,52 @@ class HistoryBuffer:
             softening if softening is not None else 0.0,
         )
         return feats
+
+
+def _test_zero_padding():
+    """
+    Test that zero-padding is used for incomplete history.
+    Run with: python -c "from src.history_buffer import _test_zero_padding; _test_zero_padding()"
+    """
+    import torch
+    from src.particle import ParticleTorch
+
+    # Test 1: Empty buffer -> all padding should be zeros
+    hb = HistoryBuffer(history_len=3, feature_type='basic')
+    p = ParticleTorch(
+        position=torch.randn(4, 3),
+        velocity=torch.randn(4, 3),
+        mass=torch.ones(4),
+        dt=0.01,
+        softening=0.1
+    )
+
+    feats_empty = hb.features_for(p)
+    assert feats_empty.shape[-1] == 44, f"Expected 44 features for basic, got {feats_empty.shape[-1]}"
+
+    # Test 2: Partially filled buffer
+    hb.push(p)  # Now has 1 state, needs 2 more for history_len=3
+    feats_partial = hb.features_for(p)
+    assert feats_partial.shape[-1] == 44
+
+    # Test 3: Full buffer -> no padding needed
+    hb.push(p)
+    hb.push(p)  # Now has 3 states
+    feats_full = hb.features_for(p)
+    assert feats_full.shape[-1] == 44
+
+    # Test 4: Verify _zero_state preserves softening
+    from src.history_buffer import _HistoryState
+    ref = _HistoryState(
+        position=torch.randn(4, 3),
+        velocity=torch.randn(4, 3),
+        mass=torch.ones(4),
+        dt=torch.tensor(0.01),
+        softening=0.5
+    )
+    zero = HistoryBuffer._zero_state(ref)
+    assert zero.softening == 0.5, f"Softening mismatch: {zero.softening} != 0.5"
+    assert torch.allclose(zero.position, torch.zeros(4, 3))
+    assert torch.allclose(zero.velocity, torch.zeros(4, 3))
+
+    print("All zero-padding tests passed!")
