@@ -1,8 +1,8 @@
 # STATE: AITimeStepper Training Refactor
 
 **Initialized:** 2026-01-20
-**Current Phase:** 5 (in progress)
-**Overall Progress:** 4/7 phases complete, Plans 05-01 and 05-02 done
+**Current Phase:** 6 (pending)
+**Overall Progress:** 5/7 phases complete
 
 ---
 
@@ -14,7 +14,7 @@
 | 2. History Buffer Zero-Padding | **DONE** | 2/2 | Zero-padding in all feature extraction methods |
 | 3. Part 1: Trajectory Collection | **DONE** | 4/4 | All primitives, retrain loop, orchestrator, and tests complete |
 | 4. Part 2: Generalization Training | **DONE** | 2/2 | Core functions and tests complete, verified |
-| 5. Unified Epoch Structure | **IN PROGRESS** | 2/3 | Plans 05-01, 05-02 complete |
+| 5. Unified Epoch Structure | **DONE** | 3/3 | Epoch orchestrator, outer loop, and tests complete |
 | 6. Integration into runner.py | Pending | 0/5 | Replace existing run_training() |
 | 7. Cleanup Legacy Code | Pending | 0/2 | Remove old training loop |
 
@@ -22,15 +22,15 @@
 
 ## Current Work
 
-**Phase:** 5 (in progress)
-**Plan:** 05-02 complete
-**Status:** Outer training loop with checkpointing implemented, ready for tests
+**Phase:** 6 (pending)
+**Plan:** Not started
+**Status:** Phase 5 complete, ready for integration into runner.py
 
 ---
 
 ## Completed Work
 
-### Phase 5: Unified Epoch Structure (2026-01-21, in progress)
+### Phase 5: Unified Epoch Structure (2026-01-21, COMPLETE)
 - **PLAN-05-01**: Implement train_epoch_two_phase() orchestrator
   - Created `src/unified_training.py` (117 lines)
   - `train_epoch_two_phase()`: Calls collect_trajectory() then generalize_on_trajectory()
@@ -51,6 +51,16 @@
   - Returns aggregated results: epochs_completed, total_time, convergence_rate
   - Progress printed every 10 epochs
   - Commits: dd3a045, 91b8167
+
+- **PLAN-05-03**: Unit tests for unified training
+  - Created `tests/test_unified_training.py` (651 lines, 21 test cases)
+  - TestTrainEpochTwoPhase: 8 tests (return structure, metrics, history buffer, edge cases, call order)
+  - TestRunTwoPhaseTraining: 11 tests (epochs, checkpointing, convergence, history persistence)
+  - TestIntegration: 2 tests (end-to-end, history buffer)
+  - All 21 tests pass in 4.24 seconds
+  - Commit: f5eddf5
+
+- **Verification**: All success criteria met, TRAIN-08/09 requirements satisfied
 
 ### Phase 4: Generalization Training Loop (2026-01-21)
 - **PLAN-04-01**: Implement generalize_on_trajectory with minibatch sampling
@@ -152,17 +162,18 @@ None.
 - `/u/gkerex/projects/AITimeStepper/src/config.py` - Config dataclass
 - `/u/gkerex/projects/AITimeStepper/src/history_buffer.py` - HistoryBuffer class (zero-padding implemented)
 - `/u/gkerex/projects/AITimeStepper/src/trajectory_collection.py` - Trajectory primitives and orchestrator
-- `/u/gkerex/projects/AITimeStepper/tests/test_trajectory_collection.py` - Unit tests (NEW in Plan 03-04)
-- `/u/gkerex/projects/AITimeStepper/src/generalization_training.py` - Generalization training module (NEW in Plan 04-01)
-- `/u/gkerex/projects/AITimeStepper/tests/test_generalization_training.py` - Unit tests (NEW in Plan 04-02)
-- `/u/gkerex/projects/AITimeStepper/src/unified_training.py` - Unified epoch orchestrator (NEW in Plan 05-01)
-- `/u/gkerex/projects/AITimeStepper/run/runner.py` - run_training() function
+- `/u/gkerex/projects/AITimeStepper/tests/test_trajectory_collection.py` - Unit tests (Plan 03-04)
+- `/u/gkerex/projects/AITimeStepper/src/generalization_training.py` - Generalization training module (Plan 04-01)
+- `/u/gkerex/projects/AITimeStepper/tests/test_generalization_training.py` - Unit tests (Plan 04-02)
+- `/u/gkerex/projects/AITimeStepper/src/unified_training.py` - Unified epoch orchestrator (Plans 05-01, 05-02)
+- `/u/gkerex/projects/AITimeStepper/tests/test_unified_training.py` - Unit tests (Plan 05-03)
+- `/u/gkerex/projects/AITimeStepper/run/runner.py` - run_training() function (target for Phase 6)
 - `/u/gkerex/projects/AITimeStepper/src/losses.py` - Loss functions (analytic)
 - `/u/gkerex/projects/AITimeStepper/src/losses_history.py` - Loss functions (history)
 
 ### Next Steps
-1. Phase 5, Plan 05-03: Add unit tests for unified epoch training
-2. Phase 6: Integration into runner.py
+1. Phase 6: Integration into runner.py
+2. Phase 7: Cleanup legacy code
 
 ### Known Issues
 - Zero-padding in HistoryBuffer produces NaN for acceleration features when mass is zero
@@ -191,4 +202,4 @@ None.
 ---
 
 *State initialized: 2026-01-20*
-*Last updated: 2026-01-21 (Plan 05-02 complete)*
+*Last updated: 2026-01-21 (Phase 5 complete)*
