@@ -123,11 +123,12 @@ Plans:
 5. Checkpoint saved after each epoch (or every 10 epochs)
 6. W&B logging tracks Part 1 acceptance rate and Part 2 iterations
 
-**Estimated Plans:** 3-4
-- Design epoch orchestration function
-- Connect Part 1 output to Part 2 input
-- Add logging for both phases
-- Test full epoch cycle end-to-end
+**Plans:** 3 plans
+
+Plans:
+- [ ] 05-01-PLAN.md — Implement train_epoch_two_phase() single epoch orchestrator
+- [ ] 05-02-PLAN.md — Implement run_two_phase_training() outer loop with checkpointing
+- [ ] 05-03-PLAN.md — Unit tests for unified epoch structure
 
 ---
 
@@ -248,4 +249,4 @@ Phase 6 (Integration) → Phase 7 (Cleanup)
 ---
 
 *Roadmap created: 2026-01-20*
-*Last updated: 2026-01-21 (Phase 4 complete)*
+*Last updated: 2026-01-21 (Phase 5 planned)*
