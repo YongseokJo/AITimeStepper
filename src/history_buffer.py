@@ -273,14 +273,19 @@ class HistoryBuffer:
         Returns shape (F_total,) for single system, or (B, F_total) if
         `current` is batched and the history elements match shapes.
         """
-        # gather up to history_len past states; if fewer, pad by repeating oldest
+        # gather up to history_len past states; if fewer, pad with zero states
         past_list: List[_HistoryState] = list(self._buf)
         if len(past_list) < self.history_len:
             pad_count = self.history_len - len(past_list)
             if past_list:
-                past_list = [past_list[0]] * pad_count + past_list
+                # Use oldest state as reference for shape/device/dtype
+                zero_state = self._zero_state(past_list[0])
             else:
-                past_list = [self._state_from_particle(current, detach=False)] * pad_count
+                # Use current state as reference
+                current_state = self._state_from_particle(current, detach=False)
+                zero_state = self._zero_state(current_state)
+
+            past_list = [zero_state] * pad_count + past_list
 
         seq = past_list + [self._state_from_particle(current, detach=False)]
         softening = seq[0].softening
@@ -323,12 +328,6 @@ class HistoryBuffer:
 
         B = pos.shape[0]
         past_list: List[_HistoryState] = list(self._buf)
-        if len(past_list) < self.history_len:
-            pad_count = self.history_len - len(past_list)
-            if past_list:
-                past_list = [past_list[0]] * pad_count + past_list
-            else:
-                past_list = []
 
         current_state = self._state_from_tensors(
             position=pos,
@@ -338,6 +337,17 @@ class HistoryBuffer:
             softening=getattr(batch_state, "softening", 0.0),
             detach=False,
         )
+
+        if len(past_list) < self.history_len:
+            pad_count = self.history_len - len(past_list)
+            if past_list:
+                # Use oldest state as reference for shape/device/dtype
+                zero_state = self._zero_state(past_list[0])
+            else:
+                # Use current state as reference
+                zero_state = self._zero_state(current_state)
+
+            past_list = [zero_state] * pad_count + past_list
 
         seq = [self._expand_state_to_batch(s, B) for s in past_list] + [current_state]
         if not seq:
@@ -417,9 +427,13 @@ class HistoryBuffer:
             if len(past_list) < history_len:
                 pad_count = history_len - len(past_list)
                 if past_list:
-                    past_list = [past_list[0]] * pad_count + past_list
+                    # Use oldest state as reference for shape/device/dtype
+                    zero_state = HistoryBuffer._zero_state(past_list[0])
                 else:
-                    past_list = [current_state] * pad_count
+                    # Use current state as reference
+                    zero_state = HistoryBuffer._zero_state(current_state)
+
+                past_list = [zero_state] * pad_count + past_list
 
             seq = past_list + [current_state]
             if softening is None:
