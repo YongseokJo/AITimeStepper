@@ -1,3 +1,23 @@
+"""
+DEPRECATED: Legacy trainer utilities module.
+
+This module contains training functions from an earlier version of the codebase.
+Most functions here are no longer used by the main training pipeline.
+
+Current Status:
+- The canonical training entry point is now run/runner.py train
+- The new training system uses run_two_phase_training() from trajectory_collection.py
+- train_one_epoch(), train_one_epoch_deepspeed(), validate(), validate_deepspeed()
+  were designed for data-loader-based training and are not used in the physics-informed
+  trajectory training approach
+
+Checkpoint Note:
+- The save_checkpoint() function here is a duplicate of src/checkpoint.py
+- Prefer using src/checkpoint.py for checkpoint operations in new code
+
+These functions are preserved for backward compatibility with older scripts.
+"""
+
 import torch
 import torch.nn as nn
 import torch.optim as optim

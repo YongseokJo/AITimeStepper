@@ -13,6 +13,17 @@ if os.getenv("AITIMESTEPPER_DETECT_ANOMALY", "0") == "1":
 
 
 def loss_fn(model, particle: ParticleTorch):
+    """
+    DEPRECATED: This function is no longer used in the modern training pipeline.
+
+    This was an early experimental loss function with print statements for debugging.
+    It is superseded by loss_fn_batch and the new trajectory-based training system.
+
+    The current training entry point is run/runner.py train, which uses
+    run_two_phase_training() with internal loss computation in trajectory_collection.py.
+
+    Kept for historical reference only.
+    """
     batch = particle.get_batch()
     params = model(batch)  # (batch, 2)
     print("params: ", params, "params shape: ", params.shape)
@@ -44,11 +55,21 @@ def loss_fn_1(model, particle: ParticleTorch, n_steps: int = 1,
               E_lower=1e-8, E_upper=1e-4,
               return_particle: bool = False):
     """
+    DEPRECATED: Superseded by loss_fn_batch.
+
     One forward pass + loss.
 
-    model: maps batch -> [dt_raw, E_hat_raw]
-    particle: a ParticleTorch object with some initial state
-    n_steps: how many integration steps to evolve with the predicted dt.
+    This function handles single-system (non-batched) input. For batched training,
+    use loss_fn_batch instead. However, both are now deprecated in favor of
+    the trajectory-based training system in trajectory_collection.py.
+
+    The current training entry point is run/runner.py train, which uses
+    run_two_phase_training().
+
+    Args:
+        model: maps batch -> [dt_raw, E_hat_raw]
+        particle: a ParticleTorch object with some initial state
+        n_steps: how many integration steps to evolve with the predicted dt.
     """
 
     # --- 0. Work on a fresh copy of the particle state ---
@@ -160,20 +181,29 @@ def loss_fn_batch(
     lambda_dt=1.0,
     lambda_pred=1.0,
     E_lower=1e-8,
-    E_upper=1e-4, 
+    E_upper=1e-4,
     return_particle: bool = False,
 ):
     """
-    One forward pass + loss.
+    DEPRECATED: Replaced by internal loss computation in trajectory_collection.py.
 
-    model: maps batch -> [dt_raw, E_hat_raw]
-            If batch has shape (B, D), model(batch) has shape (B, 2).
+    One forward pass + loss for batched particle systems.
 
-    particle: ParticleTorch object that may represent:
-        - a single system: position shape (2,)
-        - a batch of systems: position shape (B, 2)
+    This function was the primary loss function for the original training loop.
+    The new training system uses run_two_phase_training() from trajectory_collection.py,
+    which computes losses internally via compute_single_step_loss().
 
-    n_steps: how many integration steps to evolve with the predicted dt.
+    The current training entry point is run/runner.py train.
+
+    Kept for backward compatibility with older scripts that may still import it.
+
+    Args:
+        model: maps batch -> [dt_raw, E_hat_raw]
+               If batch has shape (B, D), model(batch) has shape (B, 2).
+        particle: ParticleTorch object that may represent:
+            - a single system: position shape (2,)
+            - a batch of systems: position shape (B, 2)
+        n_steps: how many integration steps to evolve with the predicted dt.
     """
 
     # --- 0. Work on a fresh copy of the particle state ---

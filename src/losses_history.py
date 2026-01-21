@@ -25,7 +25,15 @@ def loss_fn_batch_history(
     return_particle: bool = False,
 ):
     """
+    DEPRECATED: Replaced by trajectory_collection.compute_single_step_loss().
+
     History-aware forward pass + physics loss.
+
+    This function was used for history-aware training with explicit HistoryBuffer
+    management. The new training system (run_two_phase_training in trajectory_collection.py)
+    handles history internally within the trajectory collection loop.
+
+    The current training entry point is run/runner.py train.
 
     Model input is the time-concatenated feature vector provided by
     `history.features_for(p)` where p is the current ParticleTorch.
@@ -262,8 +270,16 @@ def loss_fn_batch_history_batch(
     return_particle: bool = False,
 ):
     """
+    DEPRECATED: Replaced by internal loss computation in trajectory_collection.py.
+
     Batched, history-aware loss. Builds inputs per sample from corresponding
     HistoryBuffer and computes physics losses over the batch.
+
+    This function was designed for multi-orbit training with batched particle states
+    and corresponding history buffers. The new training system (run_two_phase_training)
+    handles multi-orbit cases with a warning and falls back to single-orbit processing.
+
+    The current training entry point is run/runner.py train.
     """
     import torch
     import math
