@@ -166,15 +166,16 @@ Plans:
 
 **Success Criteria:**
 1. Old multi-step loss evaluation removed from run_training()
-2. Legacy scripts in `run/legacy/` marked for deletion (if not already removed)
-3. Unused loss function calls removed (if replaced)
-4. Code comments updated to reflect new training approach
+2. Legacy scripts in `run/legacy/` deleted
+3. Unused loss function imports removed from runner.py
+4. Code comments updated to reflect new training approach (deprecation notices)
 5. No orphaned imports or dead code in runner.py
 
-**Estimated Plans:** 2
-- Remove old training loop logic
-- Clean up imports and comments
-- Verify no functionality broken
+**Plans:** 2 plans
+
+Plans:
+- [ ] 07-01-PLAN.md — Remove unused imports from runner.py and delete legacy scripts
+- [ ] 07-02-PLAN.md — Add deprecation notices to loss functions and trainer.py
 
 ---
 
@@ -252,4 +253,4 @@ Phase 6 (Integration) → Phase 7 (Cleanup)
 ---
 
 *Roadmap created: 2026-01-20*
-*Last updated: 2026-01-21 (Phase 6 planned)*
+*Last updated: 2026-01-21 (Phase 7 planned)*
