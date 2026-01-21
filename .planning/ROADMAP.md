@@ -102,8 +102,10 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
-- [ ] 04-01-PLAN.md — Implement generalize_on_trajectory with minibatch sampling
-- [ ] 04-02-PLAN.md — Unit tests for generalization training
+- [x] 04-01-PLAN.md — Implement generalize_on_trajectory with minibatch sampling
+- [x] 04-02-PLAN.md — Unit tests for generalization training
+
+**Completed:** 2026-01-21
 
 ---
 
@@ -246,4 +248,4 @@ Phase 6 (Integration) → Phase 7 (Cleanup)
 ---
 
 *Roadmap created: 2026-01-20*
-*Last updated: 2026-01-21 (Phase 4 planned)*
+*Last updated: 2026-01-21 (Phase 4 complete)*

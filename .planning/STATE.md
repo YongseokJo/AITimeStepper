@@ -1,8 +1,8 @@
 # STATE: AITimeStepper Training Refactor
 
 **Initialized:** 2026-01-20
-**Current Phase:** 4 (in progress)
-**Overall Progress:** 3/7 phases complete (Plan 04-02 done)
+**Current Phase:** 4 (complete)
+**Overall Progress:** 4/7 phases complete
 
 ---
 
@@ -13,7 +13,7 @@
 | 1. Configuration Parameters | **DONE** | 2/2 | Added steps_per_epoch, validation for training params |
 | 2. History Buffer Zero-Padding | **DONE** | 2/2 | Zero-padding in all feature extraction methods |
 | 3. Part 1: Trajectory Collection | **DONE** | 4/4 | All primitives, retrain loop, orchestrator, and tests complete |
-| 4. Part 2: Generalization Training | **IN PROGRESS** | 2/4 | Plan 01-02 complete: core functions and tests |
+| 4. Part 2: Generalization Training | **DONE** | 2/2 | Core functions and tests complete, verified |
 | 5. Unified Epoch Structure | Pending | 0/4 | Combine Part 1 + Part 2 |
 | 6. Integration into runner.py | Pending | 0/5 | Replace existing run_training() |
 | 7. Cleanup Legacy Code | Pending | 0/2 | Remove old training loop |
@@ -22,30 +22,32 @@
 
 ## Current Work
 
-**Phase:** 4 (in progress)
-**Plan:** 04-02 (complete)
-**Status:** Unit tests for generalization training complete
-
-### Plan 04-02 Complete
-- Created `tests/test_generalization_training.py` (402 lines, 16 test cases)
-- TestSampleMinibatch: 4 tests for minibatch sampling behavior
-- TestEvaluateMinibatch: 4 tests for evaluation and particle immutability
-- TestGeneralizeOnTrajectory: 8 tests for convergence, edge cases, training behavior
-- All 16 tests pass in under 6 seconds
-- Commits: 5f8d2be, 1c086d9, add0fd4
-
-### Plan 04-01 Complete
-- Created `src/generalization_training.py` (241 lines)
-- `sample_minibatch()`: Random sampling from trajectory list
-- `evaluate_minibatch()`: Single-step evaluation with energy threshold
-- `generalize_on_trajectory()`: Convergence loop until all pass
-- Edge cases handled: empty trajectory, small trajectory
-- All functions exported from `src/__init__.py`
-- Commits: d84477b, 80b86c0
+**Phase:** 4 (complete)
+**Status:** All plans executed and verified
 
 ---
 
 ## Completed Work
+
+### Phase 4: Generalization Training Loop (2026-01-21)
+- **PLAN-04-01**: Implement generalize_on_trajectory with minibatch sampling
+  - Created `src/generalization_training.py` (241 lines)
+  - `sample_minibatch()`: Random sampling from trajectory list
+  - `evaluate_minibatch()`: Single-step evaluation with energy threshold
+  - `generalize_on_trajectory()`: Convergence loop until all pass
+  - Edge cases handled: empty trajectory, small trajectory
+  - All functions exported from `src/__init__.py`
+  - Commits: d84477b, 80b86c0, f7daba5
+
+- **PLAN-04-02**: Unit tests for generalization training
+  - Created `tests/test_generalization_training.py` (402 lines, 16 test cases)
+  - TestSampleMinibatch: 4 tests for minibatch sampling behavior
+  - TestEvaluateMinibatch: 4 tests for evaluation and particle immutability
+  - TestGeneralizeOnTrajectory: 8 tests for convergence, edge cases, training behavior
+  - All 16 tests pass in under 6 seconds
+  - Commits: 5f8d2be, 1c086d9, add0fd4, 3b520dd
+
+- **Verification**: All 6 success criteria met, TRAIN-05/06/07 requirements satisfied
 
 ### Phase 1: Configuration Parameters (2026-01-20)
 - **PLAN-01**: Added `steps_per_epoch: int = 1` field and `--steps-per-epoch` CLI argument
@@ -135,9 +137,11 @@ None.
 - `/u/gkerex/projects/AITimeStepper/src/losses_history.py` - Loss functions (history)
 
 ### Next Steps
-1. Phase 4, Plan 04-03: Integration tests combining Part 1 + Part 2
-2. Phase 4, Plan 04-04: Documentation and examples
-3. Phase 5: Unified epoch structure combining trajectory collection + generalization
+1. Phase 5: Unified epoch structure combining trajectory collection + generalization
+   - Design `train_epoch_two_phase()` orchestrating Part 1 + Part 2
+   - Connect Part 1 output (trajectory) to Part 2 input
+   - Add logging for both phases
+   - Test full epoch cycle end-to-end
 
 ### Known Issues
 - Zero-padding in HistoryBuffer produces NaN for acceleration features when mass is zero
@@ -166,4 +170,4 @@ None.
 ---
 
 *State initialized: 2026-01-20*
-*Last updated: 2026-01-21 (Phase 4, Plan 02 complete)*
+*Last updated: 2026-01-21 (Phase 4 complete, verified)*
