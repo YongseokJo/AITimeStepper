@@ -510,4 +510,38 @@ def _test_zero_padding():
     assert torch.allclose(zero.position, torch.zeros(4, 3))
     assert torch.allclose(zero.velocity, torch.zeros(4, 3))
 
+    # Test 5: features_for_batch with empty buffer
+    hb_batch = HistoryBuffer(history_len=3, feature_type='basic')
+    p_batch = ParticleTorch(
+        position=torch.randn(2, 4, 3),
+        velocity=torch.randn(2, 4, 3),
+        mass=torch.ones(4),
+        dt=torch.tensor([0.01, 0.01]),
+        softening=0.1
+    )
+    feats_batch = hb_batch.features_for_batch(p_batch)
+    assert feats_batch.shape == (2, 44), f"Expected (2, 44), got {feats_batch.shape}"
+
+    # Test 6: features_for_histories with mixed buffer states
+    hb_a = HistoryBuffer(history_len=3, feature_type='basic')
+    hb_b = HistoryBuffer(history_len=3, feature_type='basic')
+    # Push one state to hb_a, leave hb_b empty
+    p_single = ParticleTorch(
+        position=torch.randn(4, 3),
+        velocity=torch.randn(4, 3),
+        mass=torch.ones(4),
+        dt=0.01,
+        softening=0.1
+    )
+    hb_a.push(p_single)
+
+    feats_multi = HistoryBuffer.features_for_histories([hb_a, hb_b], p_batch)
+    assert feats_multi.shape == (2, 44), f"Expected (2, 44), got {feats_multi.shape}"
+
+    # Test 7: delta_mag feature type with zero-padding
+    hb_delta = HistoryBuffer(history_len=3, feature_type='delta_mag')
+    feats_delta = hb_delta.features_for(p_single)
+    # delta_mag: 10 features per transition, 3 transitions for history_len=3
+    assert feats_delta.shape[-1] == 30, f"Expected 30 delta_mag features, got {feats_delta.shape[-1]}"
+
     print("All zero-padding tests passed!")
