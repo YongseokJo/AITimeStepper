@@ -19,6 +19,7 @@ class Config:
     dt_bound: float = 1e-8
     rel_loss_bound: float = 1e-5
     energy_threshold: float = 2e-4
+    steps_per_epoch: int = 1
     replay_steps: int = 1000
     replay_batch_size: int = 512
     min_replay_size: int = 2
@@ -110,6 +111,7 @@ class Config:
             add_arg("--dt-bound", type=float, default=cls.dt_bound, help="dt bound (for loss heuristics)")
             add_arg("--rel-loss-bound", type=float, default=cls.rel_loss_bound, help="relative loss bound")
             add_arg("--energy-threshold", type=float, default=cls.energy_threshold, help="accept/reject energy threshold")
+            add_arg("--steps-per-epoch", type=int, default=cls.steps_per_epoch, help="number of training steps per epoch")
             add_arg("--replay-steps", type=int, default=cls.replay_steps, help="max replay optimization steps per epoch")
             add_arg("--replay-batch-size", type=int, default=cls.replay_batch_size, help="replay batch size")
             add_arg("--replay-batch", type=int, default=cls.replay_batch_size, help="replay buffer batch size")
@@ -244,6 +246,12 @@ class Config:
             raise ValueError("dim must be >= 1")
         if self.duration is not None and self.duration < 0:
             raise ValueError("duration must be >= 0")
+        if self.epochs < 1:
+            raise ValueError("epochs must be >= 1")
+        if self.steps_per_epoch < 1:
+            raise ValueError("steps_per_epoch must be >= 1")
+        if self.energy_threshold <= 0:
+            raise ValueError("energy_threshold must be > 0")
 
     def resolve_device(self) -> torch.device:
         if isinstance(self.device, torch.device):
