@@ -16,3 +16,8 @@ from .trajectory_collection import (
     collect_trajectory_step,
     collect_trajectory,
 )
+from .generalization_training import (
+    generalize_on_trajectory,
+    sample_minibatch,
+    evaluate_minibatch,
+)
