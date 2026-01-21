@@ -16,8 +16,8 @@ Requirements for the two-phase training routine refactor.
 - [x] **TRAIN-05**: Random minibatch sampling from collected trajectory
 - [x] **TRAIN-06**: Train until ALL samples pass energy threshold
 - [x] **TRAIN-07**: Single timestep predictions per sample
-- [ ] **TRAIN-08**: One epoch = Part 1 (collection) + Part 2 (generalization)
-- [ ] **TRAIN-09**: Run for fixed N epochs (configurable)
+- [x] **TRAIN-08**: One epoch = Part 1 (collection) + Part 2 (generalization)
+- [x] **TRAIN-09**: Run for fixed N epochs (configurable)
 
 ### History Handling
 
@@ -66,8 +66,8 @@ Deferred to future work.
 | TRAIN-05 | Phase 4 | **DONE** |
 | TRAIN-06 | Phase 4 | **DONE** |
 | TRAIN-07 | Phase 4 | **DONE** |
-| TRAIN-08 | Phase 5 | Pending |
-| TRAIN-09 | Phase 5 | Pending |
+| TRAIN-08 | Phase 5 | **DONE** |
+| TRAIN-09 | Phase 5 | **DONE** |
 | HIST-01 | Phase 2 | **DONE** |
 | HIST-02 | Phase 3 | Pending |
 | CONF-01 | Phase 1 | **DONE** |
@@ -84,4 +84,4 @@ Deferred to future work.
 
 ---
 *Requirements defined: 2026-01-20*
-*Last updated: 2026-01-21 (Phase 4 TRAIN-05/06/07 complete)*
+*Last updated: 2026-01-21 (Phase 5 TRAIN-08/09 complete)*
