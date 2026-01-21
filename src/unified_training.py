@@ -14,10 +14,12 @@ Requirements: TRAIN-08, TRAIN-09
 
 import time
 import warnings
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 
+from .checkpoint import save_checkpoint
 from .config import Config
 from .history_buffer import HistoryBuffer
 from .model_adapter import ModelAdapter
@@ -114,4 +116,166 @@ def train_epoch_two_phase(
         'converged': converged,
         'part2_iterations': part2_iters,
         'epoch_time': epoch_time,
+    }
+
+
+def run_two_phase_training(
+    model: torch.nn.Module,
+    particle: ParticleTorch,
+    optimizer: torch.optim.Optimizer,
+    config: Config,
+    adapter: ModelAdapter,
+    history_buffer: Optional[HistoryBuffer] = None,
+    save_dir: Optional[Path] = None,
+    wandb_run: Optional[Any] = None,
+    checkpoint_interval: int = 10,
+) -> Dict[str, Any]:
+    """
+    Run N epochs of two-phase training with checkpointing and logging.
+
+    Implements TRAIN-09: Run for fixed N epochs (config.epochs).
+
+    Training loop:
+    1. For each epoch in range(config.epochs):
+       a. Call train_epoch_two_phase() to execute Part 1 + Part 2
+       b. Log metrics to W&B (if enabled)
+       c. Save checkpoint every checkpoint_interval epochs and on final epoch
+    2. Return aggregated training results
+
+    IMPORTANT: The same history_buffer instance is passed to all epochs.
+    This preserves temporal context across epochs (per 05-RESEARCH.md).
+
+    IMPORTANT: The particle state is NOT reset between epochs by default.
+    Each epoch continues from the final state of the previous epoch.
+    For fresh ICs each epoch, caller should handle particle reset.
+
+    Args:
+        model: Neural network for dt prediction
+        particle: Initial particle state
+        optimizer: PyTorch optimizer for model
+        config: Config with epochs, energy_threshold, steps_per_epoch, etc.
+        adapter: ModelAdapter for feature construction
+        history_buffer: Optional history buffer (persists across epochs)
+        save_dir: Directory for checkpoint saves (None = no saves)
+        wandb_run: W&B run object from wandb.init() (None = no logging)
+        checkpoint_interval: Save checkpoint every N epochs (default: 10)
+
+    Returns:
+        training_result: dict with:
+            'epochs_completed': int - Number of epochs run
+            'total_time': float - Total training time (seconds)
+            'final_metrics': dict - Metrics from last epoch
+            'convergence_rate': float - Fraction of epochs where Part 2 converged
+            'results': List[dict] - Per-epoch results (if config.debug)
+
+    Example:
+        >>> result = run_two_phase_training(
+        ...     model, particle, optimizer, config, adapter,
+        ...     history_buffer=history_buffer,
+        ...     save_dir=Path("data/my_run/model"),
+        ...     wandb_run=wandb_run,
+        ... )
+        >>> print(f"Trained for {result['epochs_completed']} epochs")
+        >>> print(f"Convergence rate: {result['convergence_rate']:.1%}")
+    """
+    # Import wandb only if needed (avoid import error if not installed)
+    wandb = None
+    if wandb_run is not None:
+        try:
+            import wandb as wandb_lib
+            wandb = wandb_lib
+        except ImportError:
+            warnings.warn("wandb_run provided but wandb not installed; logging disabled")
+            wandb_run = None
+
+    # Track overall training
+    training_start = time.perf_counter()
+    all_results: List[Dict[str, Any]] = []
+    converged_count = 0
+
+    # Current particle (will be updated each epoch if continuing trajectory)
+    current_particle = particle
+
+    # Track last epoch result for final return
+    epoch_result: Dict[str, Any] = {}
+
+    for epoch in range(config.epochs):
+        # Execute one epoch (Part 1 + Part 2)
+        epoch_result = train_epoch_two_phase(
+            model=model,
+            particle=current_particle,
+            optimizer=optimizer,
+            config=config,
+            adapter=adapter,
+            history_buffer=history_buffer,
+        )
+
+        # Track convergence
+        if epoch_result['converged']:
+            converged_count += 1
+
+        # Store results (only in debug mode to save memory)
+        if config.debug:
+            all_results.append(epoch_result)
+
+        # W&B logging
+        if wandb_run is not None and wandb is not None:
+            traj_m = epoch_result['trajectory_metrics']
+            gen_m = epoch_result['generalization_metrics']
+
+            # Compute acceptance rate: 1 / (1 + mean_retrain_iterations)
+            mean_retrain = traj_m.get('mean_retrain_iterations', 0.0)
+            acceptance_rate = 1.0 / (1.0 + mean_retrain) if mean_retrain >= 0 else 0.0
+
+            log_data = {
+                'epoch': epoch,
+                'epoch_time': epoch_result['epoch_time'],
+                # Part 1 metrics
+                'part1/trajectory_length': traj_m.get('trajectory_length', 0),
+                'part1/mean_retrain_iterations': mean_retrain,
+                'part1/max_retrain_iterations': traj_m.get('max_retrain_iterations', 0),
+                'part1/mean_energy_error': traj_m.get('mean_energy_error', 0.0),
+                'part1/warmup_discarded': traj_m.get('warmup_discarded', 0),
+                'part1/acceptance_rate': acceptance_rate,
+                # Part 2 metrics
+                'part2/converged': int(epoch_result['converged']),
+                'part2/iterations': epoch_result['part2_iterations'],
+                'part2/final_pass_rate': gen_m.get('final_pass_rate', 0.0),
+                'part2/mean_rel_dE': gen_m.get('mean_rel_dE', 0.0),
+                'part2/max_rel_dE': gen_m.get('max_rel_dE', 0.0),
+            }
+            wandb.log(log_data)
+
+        # Checkpointing: every checkpoint_interval epochs and on final epoch
+        if save_dir is not None:
+            is_checkpoint_epoch = (epoch % checkpoint_interval == 0) or (epoch == config.epochs - 1)
+            if is_checkpoint_epoch:
+                save_path = Path(save_dir) / f"model_epoch_{epoch:04d}.pt"
+                save_checkpoint(
+                    save_path,
+                    model,
+                    optimizer,
+                    epoch=epoch,
+                    logs=epoch_result,
+                    config=config,
+                )
+                if config.debug:
+                    print(f"Checkpoint saved: {save_path}")
+
+        # Print progress (every 10 epochs or in debug mode)
+        if config.debug or (epoch % 10 == 0) or (epoch == config.epochs - 1):
+            traj_len = epoch_result['trajectory_metrics']['trajectory_length']
+            conv_str = "converged" if epoch_result['converged'] else f"max_iter({epoch_result['part2_iterations']})"
+            print(f"Epoch {epoch}: traj_len={traj_len}, part2={conv_str}, time={epoch_result['epoch_time']:.2f}s")
+
+    # Compute final results
+    total_time = time.perf_counter() - training_start
+    convergence_rate = converged_count / config.epochs if config.epochs > 0 else 0.0
+
+    return {
+        'epochs_completed': config.epochs,
+        'total_time': total_time,
+        'final_metrics': epoch_result if config.epochs > 0 else {},
+        'convergence_rate': convergence_rate,
+        'results': all_results if config.debug else [],
     }
