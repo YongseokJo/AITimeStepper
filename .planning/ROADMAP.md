@@ -35,7 +35,7 @@ Each epoch combines both parts. Training converges when all samples pass energy 
 
 ---
 
-## Phase 2: History Buffer Zero-Padding ✓
+## Phase 2: History Buffer Zero-Padding
 
 **Goal:** Replace oldest-state padding with zero-padding for history bootstrap (HIST-01)
 
@@ -73,12 +73,13 @@ Plans:
 6. Returns list of accepted (state, dt) tuples
 7. Warmup steps (first history_len) discarded once buffer fills (HIST-02)
 
-**Estimated Plans:** 4-5
-- Design trajectory collection function signature
-- Implement single-step prediction + integration
-- Add energy threshold check and accept/reject logic
-- Add retrain loop (optimizer step on same state)
-- Test with mock model and particles
+**Plans:** 4 plans
+
+Plans:
+- [ ] 03-01-PLAN.md — Core single-step prediction and energy threshold functions
+- [ ] 03-02-PLAN.md — Accept/reject retrain loop implementation
+- [ ] 03-03-PLAN.md — Trajectory collection orchestrator with warmup discard
+- [ ] 03-04-PLAN.md — Unit tests for trajectory collection
 
 ---
 
@@ -243,4 +244,4 @@ Phase 6 (Integration) → Phase 7 (Cleanup)
 ---
 
 *Roadmap created: 2026-01-20*
-*Last updated: 2026-01-20 (Phase 2 planned)*
+*Last updated: 2026-01-20 (Phase 3 planned)*
