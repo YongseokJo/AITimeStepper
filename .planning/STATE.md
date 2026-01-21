@@ -1,8 +1,8 @@
 # STATE: AITimeStepper Training Refactor
 
 **Initialized:** 2026-01-20
-**Current Phase:** 3 (complete)
-**Overall Progress:** 3/7 phases complete
+**Current Phase:** 4 (in progress)
+**Overall Progress:** 3/7 phases complete (Plan 04-01 done)
 
 ---
 
@@ -13,7 +13,7 @@
 | 1. Configuration Parameters | **DONE** | 2/2 | Added steps_per_epoch, validation for training params |
 | 2. History Buffer Zero-Padding | **DONE** | 2/2 | Zero-padding in all feature extraction methods |
 | 3. Part 1: Trajectory Collection | **DONE** | 4/4 | All primitives, retrain loop, orchestrator, and tests complete |
-| 4. Part 2: Generalization Training | Pending | 0/4 | Train on minibatches until convergence |
+| 4. Part 2: Generalization Training | **IN PROGRESS** | 1/4 | Plan 01 complete: core functions |
 | 5. Unified Epoch Structure | Pending | 0/4 | Combine Part 1 + Part 2 |
 | 6. Integration into runner.py | Pending | 0/5 | Replace existing run_training() |
 | 7. Cleanup Legacy Code | Pending | 0/2 | Remove old training loop |
@@ -22,8 +22,18 @@
 
 ## Current Work
 
-**Phase:** 3 (complete)
-**Status:** All 4 plans executed, verified, ready for Phase 4
+**Phase:** 4 (in progress)
+**Plan:** 04-01 (complete)
+**Status:** Core generalization training functions implemented
+
+### Plan 04-01 Complete
+- Created `src/generalization_training.py` (241 lines)
+- `sample_minibatch()`: Random sampling from trajectory list
+- `evaluate_minibatch()`: Single-step evaluation with energy threshold
+- `generalize_on_trajectory()`: Convergence loop until all pass
+- Edge cases handled: empty trajectory, small trajectory
+- All functions exported from `src/__init__.py`
+- Commits: d84477b, 80b86c0
 
 ---
 
@@ -115,11 +125,10 @@ None.
 - `/u/gkerex/projects/AITimeStepper/src/losses_history.py` - Loss functions (history)
 
 ### Next Steps
-1. Phase 4: Implement Part 2 generalization training
-   - Design minibatch sampling from trajectory buffer
-   - Implement single-step loss evaluation
-   - Add convergence check (all-pass criterion)
-   - Test convergence on synthetic trajectory
+1. Phase 4, Plan 04-02: Add unit tests for generalization training
+   - Test sample_minibatch() random sampling
+   - Test evaluate_minibatch() pass/fail logic
+   - Test generalize_on_trajectory() convergence
 
 ### Known Issues
 - Zero-padding in HistoryBuffer produces NaN for acceleration features when mass is zero
@@ -142,8 +151,10 @@ None.
 | 2026-01-21 | Dynamic input dimension in mock models | Supports both analytic (11) and history (44) feature dimensions |
 | 2026-01-21 | Pre-populate history for tests | Avoids zero-padding NaN bug in acceleration computation |
 | 2026-01-21 | Higher energy threshold for tests | 10% vs 0.02% for faster test convergence; unit tests verify behavior not physics |
+| 2026-01-21 | random.sample() for minibatch | Trajectory is Python list, not tensor; uniform sampling without replacement |
+| 2026-01-21 | Early return for empty/small trajectory | Edge cases return success immediately with appropriate metrics |
 
 ---
 
 *State initialized: 2026-01-20*
-*Last updated: 2026-01-21 (Phase 3 complete, verified)*
+*Last updated: 2026-01-21 (Phase 4, Plan 01 complete)*
