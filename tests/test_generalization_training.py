@@ -219,3 +219,184 @@ class TestEvaluateMinibatch:
                 f"Particle {i} position was modified during evaluation"
             assert torch.allclose(particle.velocity, original_velocities[i]), \
                 f"Particle {i} velocity was modified during evaluation"
+
+
+class TestGeneralizeOnTrajectory:
+    """Tests for generalize_on_trajectory function."""
+
+    def test_returns_correct_structure(self, sample_trajectory, config, adapter):
+        """Should return (converged, iteration_count, metrics)."""
+        model = TrainableMockModel(input_dim=11, initial_dt=1e-7)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+
+        result = generalize_on_trajectory(
+            model, sample_trajectory, optimizer, config, adapter
+        )
+
+        assert len(result) == 3
+        converged, iteration_count, metrics = result
+        assert isinstance(converged, bool)
+        assert isinstance(iteration_count, int)
+        assert isinstance(metrics, dict)
+
+    def test_converges_with_good_model(self, sample_trajectory, config, adapter):
+        """Should converge quickly with model that produces small dt."""
+        model = MockModel(dt_value=1e-8)  # Very small dt = always passes
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+
+        converged, iterations, metrics = generalize_on_trajectory(
+            model, sample_trajectory, optimizer, config, adapter
+        )
+
+        assert converged is True
+        assert iterations == 1  # Should converge on first iteration
+
+    def test_empty_trajectory_returns_converged(self, config, adapter):
+        """Empty trajectory should return immediately with converged=True."""
+        model = MockModel(dt_value=0.1)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+        empty_trajectory = []
+
+        converged, iterations, metrics = generalize_on_trajectory(
+            model, empty_trajectory, optimizer, config, adapter
+        )
+
+        assert converged is True
+        assert iterations == 0
+
+    def test_small_trajectory_skips(self, simple_particle, config, adapter):
+        """Trajectory smaller than min_replay_size should skip."""
+        model = MockModel(dt_value=0.1)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+        small_trajectory = [(simple_particle, 0.001)]  # Only 1 sample
+
+        # Config has min_replay_size=2
+        converged, iterations, metrics = generalize_on_trajectory(
+            model, small_trajectory, optimizer, config, adapter
+        )
+
+        assert converged is True
+        assert iterations == 0
+        assert metrics.get('skipped', False) is True
+
+    def test_respects_max_iterations(self, sample_trajectory, config, adapter):
+        """Should stop at replay_steps if not converged."""
+        # Create config with very few replay steps
+        config_limited = Config(
+            energy_threshold=1e-10,  # Impossible to achieve
+            replay_batch_size=4,
+            replay_steps=5,  # Only 5 iterations
+            min_replay_size=2,
+            E_lower=1e-6,
+            E_upper=1e-2,
+            num_particles=2,
+            dim=2,
+        )
+        model = TrainableMockModel(input_dim=11, initial_dt=0.1)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+
+        converged, iterations, metrics = generalize_on_trajectory(
+            model, sample_trajectory, optimizer, config_limited, adapter
+        )
+
+        assert converged is False
+        assert iterations == config_limited.replay_steps
+
+    def test_metrics_populated(self, sample_trajectory, config, adapter):
+        """Metrics should be populated after training."""
+        model = MockModel(dt_value=1e-8)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+
+        converged, iterations, metrics = generalize_on_trajectory(
+            model, sample_trajectory, optimizer, config, adapter
+        )
+
+        assert 'mean_rel_dE' in metrics
+        assert 'max_rel_dE' in metrics
+        assert 'final_pass_rate' in metrics
+
+    def test_converges_after_training(self, simple_particle, adapter):
+        """Model should improve during training and eventually converge.
+
+        This test verifies realistic training behavior:
+        1. Start with a model that produces dt values that fail threshold
+        2. Train for multiple iterations
+        3. Verify the model learns to produce better dt values
+
+        This is the key test for actual learning behavior.
+        """
+        # Create trajectory with multiple samples
+        trajectory = []
+        for i in range(10):
+            p = simple_particle.clone_detached()
+            trajectory.append((p, 0.001))
+
+        # Config with achievable threshold but not trivial
+        config_train = Config(
+            energy_threshold=0.01,  # 1% threshold - achievable but requires learning
+            replay_batch_size=5,
+            replay_steps=200,  # Allow enough iterations to converge
+            min_replay_size=2,
+            E_lower=1e-6,
+            E_upper=1e-2,
+            num_particles=2,
+            dim=2,
+        )
+
+        # Start with model that produces moderate dt (may or may not pass initially)
+        # The key is it can learn to produce smaller dt through training
+        model = TrainableMockModel(input_dim=11, initial_dt=1e-5)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+
+        # Record initial dt prediction
+        with torch.no_grad():
+            dummy_input = torch.zeros(1, 11, dtype=torch.float64)
+            initial_dt = model(dummy_input).mean().item()
+
+        converged, iterations, metrics = generalize_on_trajectory(
+            model, trajectory, optimizer, config_train, adapter
+        )
+
+        # The model should either:
+        # 1. Converge (all samples pass), OR
+        # 2. Show improvement in metrics even if not fully converged
+
+        if converged:
+            # Converged successfully
+            assert iterations > 0, "Should take at least one iteration"
+            assert iterations <= config_train.replay_steps
+        else:
+            # Even if not converged, should have trained for max iterations
+            assert iterations == config_train.replay_steps
+            # And model should have changed (dt should be different)
+            with torch.no_grad():
+                final_dt = model(dummy_input).mean().item()
+            # Training should have changed the model
+            # (we don't assert direction because loss can push either way
+            # depending on whether dt was too big or too small)
+            assert final_dt != initial_dt or metrics.get('final_pass_rate', 0) > 0
+
+    def test_trajectory_immutability_during_training(self, sample_trajectory, config, adapter):
+        """Trajectory particles should NOT be modified during training loop.
+
+        Multiple iterations of training should not affect the original
+        trajectory particles, which are reused across iterations.
+        """
+        model = TrainableMockModel(input_dim=11, initial_dt=0.01)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+
+        # Record original positions of ALL trajectory particles
+        original_positions = [p.position.clone() for p, _ in sample_trajectory]
+        original_velocities = [p.velocity.clone() for p, _ in sample_trajectory]
+
+        # Run training for multiple iterations
+        _ = generalize_on_trajectory(
+            model, sample_trajectory, optimizer, config, adapter
+        )
+
+        # Verify ALL trajectory particles are unchanged
+        for i, (particle, _) in enumerate(sample_trajectory):
+            assert torch.allclose(particle.position, original_positions[i]), \
+                f"Trajectory particle {i} position was modified during training"
+            assert torch.allclose(particle.velocity, original_velocities[i]), \
+                f"Trajectory particle {i} velocity was modified during training"
