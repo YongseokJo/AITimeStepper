@@ -237,6 +237,34 @@ def run_training(config: Config) -> None:
 
     adapter = ModelAdapter(config, device=device, dtype=dtype)
 
+    wandb_run = None
+    wandb = None
+    if config.extra.get("wandb", False):
+        try:
+            import wandb as wandb_lib
+        except ImportError as exc:
+            raise RuntimeError("wandb is not installed; install it or disable --wandb") from exc
+        wandb = wandb_lib
+        wandb_project = config.extra.get("wandb_project") or "AITimeStepper"
+        wandb_name = config.extra.get("wandb_name") or config.save_name or "runner_train"
+        wandb_run = wandb.init(
+            project=wandb_project,
+            name=wandb_name,
+            config=config.as_wandb_dict(),
+        )
+
+    def _wandb_log_value(value: object) -> Optional[float]:
+        if value is None:
+            return None
+        if torch.is_tensor(value):
+            if value.numel() != 1:
+                return None
+            return float(value.item())
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
     def _build_particle() -> torch.Tensor:
         ptcls = generate_random_ic(
             num_particles=config.num_particles,
@@ -339,6 +367,14 @@ def run_training(config: Config) -> None:
         loss.backward()
         optimizer.step()
 
+        if wandb_run is not None:
+            log_data = {"epoch": epoch, "loss": float(loss.item())}
+            for key in ("dt", "E0", "rel_dE", "rel_dE_mean", "rel_dL_mean"):
+                logged = _wandb_log_value(logs.get(key))
+                if logged is not None:
+                    log_data[key] = logged
+            wandb.log(log_data)
+
         if epoch % 10 == 0 or epoch == config.epochs - 1:
             save_dir = pathlib.Path(project_root) / "data" / (config.save_name or "run_nbody") / "model"
             save_path = save_dir / f"model_epoch_{epoch:04d}.pt"
@@ -354,6 +390,9 @@ def run_training(config: Config) -> None:
             print(f"epoch {epoch} loss={float(loss.item()):.6e} saved={save_path}")
         epoch += 1
 
+    if wandb_run is not None:
+        wandb.finish()
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Unified N-body ML + simulation runner")
@@ -362,6 +401,9 @@ def build_parser() -> argparse.ArgumentParser:
     train = sub.add_parser("train", help="Train ML time-stepper for N-body")
     Config.add_cli_args(train, include=["train", "bounds", "history", "device", "logging", "sim", "multi"])
     train.add_argument("--ic-path", type=str, default=None, help="path to ICs (npy/txt) for training")
+    train.add_argument("--wandb", action="store_true", help="enable Weights & Biases logging")
+    train.add_argument("--wandb-project", type=str, default="AITimeStepper", help="W&B project name")
+    train.add_argument("--wandb-name", type=str, default=None, help="W&B run name (defaults to save_name)")
 
     sim = sub.add_parser("simulate", help="Run N-body simulation")
     Config.add_cli_args(sim, include=["sim", "history", "device", "logging", "external"])
