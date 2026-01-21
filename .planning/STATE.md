@@ -2,7 +2,7 @@
 
 **Initialized:** 2026-01-20
 **Current Phase:** 5 (in progress)
-**Overall Progress:** 4/7 phases complete, Plan 05-01 done
+**Overall Progress:** 4/7 phases complete, Plans 05-01 and 05-02 done
 
 ---
 
@@ -14,7 +14,7 @@
 | 2. History Buffer Zero-Padding | **DONE** | 2/2 | Zero-padding in all feature extraction methods |
 | 3. Part 1: Trajectory Collection | **DONE** | 4/4 | All primitives, retrain loop, orchestrator, and tests complete |
 | 4. Part 2: Generalization Training | **DONE** | 2/2 | Core functions and tests complete, verified |
-| 5. Unified Epoch Structure | **IN PROGRESS** | 1/3 | Plan 05-01 complete |
+| 5. Unified Epoch Structure | **IN PROGRESS** | 2/3 | Plans 05-01, 05-02 complete |
 | 6. Integration into runner.py | Pending | 0/5 | Replace existing run_training() |
 | 7. Cleanup Legacy Code | Pending | 0/2 | Remove old training loop |
 
@@ -23,8 +23,8 @@
 ## Current Work
 
 **Phase:** 5 (in progress)
-**Plan:** 05-01 complete
-**Status:** Unified epoch orchestrator implemented, ready for tests
+**Plan:** 05-02 complete
+**Status:** Outer training loop with checkpointing implemented, ready for tests
 
 ---
 
@@ -40,6 +40,17 @@
   - Tracks epoch wall clock time with time.perf_counter()
   - All functions exported from `src/__init__.py`
   - Commits: f45659a, 98fb6f9
+
+- **PLAN-05-02**: Implement run_two_phase_training() outer loop
+  - Extended `src/unified_training.py` (now 281 lines)
+  - `run_two_phase_training()`: N-epoch training with checkpointing and W&B logging
+  - Calls train_epoch_two_phase() for config.epochs iterations
+  - Checkpoint saved every checkpoint_interval epochs (default 10) and on final epoch
+  - W&B logging tracks Part 1 (acceptance_rate, trajectory_length) and Part 2 (converged, iterations)
+  - Same history_buffer instance persists across all epochs
+  - Returns aggregated results: epochs_completed, total_time, convergence_rate
+  - Progress printed every 10 epochs
+  - Commits: dd3a045, 91b8167
 
 ### Phase 4: Generalization Training Loop (2026-01-21)
 - **PLAN-04-01**: Implement generalize_on_trajectory with minibatch sampling
@@ -150,9 +161,8 @@ None.
 - `/u/gkerex/projects/AITimeStepper/src/losses_history.py` - Loss functions (history)
 
 ### Next Steps
-1. Phase 5, Plan 05-02: Add unit tests for train_epoch_two_phase()
-2. Phase 5, Plan 05-03: Add logging/callbacks for epoch metrics
-3. Phase 6: Integration into runner.py
+1. Phase 5, Plan 05-03: Add unit tests for unified epoch training
+2. Phase 6: Integration into runner.py
 
 ### Known Issues
 - Zero-padding in HistoryBuffer produces NaN for acceleration features when mass is zero
@@ -181,4 +191,4 @@ None.
 ---
 
 *State initialized: 2026-01-20*
-*Last updated: 2026-01-21 (Plan 05-01 complete)*
+*Last updated: 2026-01-21 (Plan 05-02 complete)*
