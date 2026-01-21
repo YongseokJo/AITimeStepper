@@ -2,7 +2,7 @@
 
 **Initialized:** 2026-01-20
 **Current Phase:** 4 (in progress)
-**Overall Progress:** 3/7 phases complete (Plan 04-01 done)
+**Overall Progress:** 3/7 phases complete (Plan 04-02 done)
 
 ---
 
@@ -13,7 +13,7 @@
 | 1. Configuration Parameters | **DONE** | 2/2 | Added steps_per_epoch, validation for training params |
 | 2. History Buffer Zero-Padding | **DONE** | 2/2 | Zero-padding in all feature extraction methods |
 | 3. Part 1: Trajectory Collection | **DONE** | 4/4 | All primitives, retrain loop, orchestrator, and tests complete |
-| 4. Part 2: Generalization Training | **IN PROGRESS** | 1/4 | Plan 01 complete: core functions |
+| 4. Part 2: Generalization Training | **IN PROGRESS** | 2/4 | Plan 01-02 complete: core functions and tests |
 | 5. Unified Epoch Structure | Pending | 0/4 | Combine Part 1 + Part 2 |
 | 6. Integration into runner.py | Pending | 0/5 | Replace existing run_training() |
 | 7. Cleanup Legacy Code | Pending | 0/2 | Remove old training loop |
@@ -23,8 +23,16 @@
 ## Current Work
 
 **Phase:** 4 (in progress)
-**Plan:** 04-01 (complete)
-**Status:** Core generalization training functions implemented
+**Plan:** 04-02 (complete)
+**Status:** Unit tests for generalization training complete
+
+### Plan 04-02 Complete
+- Created `tests/test_generalization_training.py` (402 lines, 16 test cases)
+- TestSampleMinibatch: 4 tests for minibatch sampling behavior
+- TestEvaluateMinibatch: 4 tests for evaluation and particle immutability
+- TestGeneralizeOnTrajectory: 8 tests for convergence, edge cases, training behavior
+- All 16 tests pass in under 6 seconds
+- Commits: 5f8d2be, 1c086d9, add0fd4
 
 ### Plan 04-01 Complete
 - Created `src/generalization_training.py` (241 lines)
@@ -120,15 +128,16 @@ None.
 - `/u/gkerex/projects/AITimeStepper/src/history_buffer.py` - HistoryBuffer class (zero-padding implemented)
 - `/u/gkerex/projects/AITimeStepper/src/trajectory_collection.py` - Trajectory primitives and orchestrator
 - `/u/gkerex/projects/AITimeStepper/tests/test_trajectory_collection.py` - Unit tests (NEW in Plan 03-04)
+- `/u/gkerex/projects/AITimeStepper/src/generalization_training.py` - Generalization training module (NEW in Plan 04-01)
+- `/u/gkerex/projects/AITimeStepper/tests/test_generalization_training.py` - Unit tests (NEW in Plan 04-02)
 - `/u/gkerex/projects/AITimeStepper/run/runner.py` - run_training() function
 - `/u/gkerex/projects/AITimeStepper/src/losses.py` - Loss functions (analytic)
 - `/u/gkerex/projects/AITimeStepper/src/losses_history.py` - Loss functions (history)
 
 ### Next Steps
-1. Phase 4, Plan 04-02: Add unit tests for generalization training
-   - Test sample_minibatch() random sampling
-   - Test evaluate_minibatch() pass/fail logic
-   - Test generalize_on_trajectory() convergence
+1. Phase 4, Plan 04-03: Integration tests combining Part 1 + Part 2
+2. Phase 4, Plan 04-04: Documentation and examples
+3. Phase 5: Unified epoch structure combining trajectory collection + generalization
 
 ### Known Issues
 - Zero-padding in HistoryBuffer produces NaN for acceleration features when mass is zero
@@ -157,4 +166,4 @@ None.
 ---
 
 *State initialized: 2026-01-20*
-*Last updated: 2026-01-21 (Phase 4, Plan 01 complete)*
+*Last updated: 2026-01-21 (Phase 4, Plan 02 complete)*
