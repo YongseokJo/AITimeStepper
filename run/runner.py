@@ -3,6 +3,7 @@ import json
 import pathlib
 import sys
 import time
+import warnings
 from typing import Optional
 
 import numpy as np
@@ -22,6 +23,7 @@ from src import (
     loss_fn_batch_history,
     loss_fn_batch_history_batch,
     make_particle,
+    run_two_phase_training,
     save_checkpoint,
     stack_particles,
 )
@@ -223,20 +225,40 @@ def run_simulation(config: Config) -> None:
 
 
 def run_training(config: Config) -> None:
+    """
+    Train ML time-stepper using two-phase training system.
+
+    This function handles:
+    1. Validation and device/dtype setup
+    2. Seed initialization
+    3. ModelAdapter creation
+    4. W&B setup (if enabled)
+    5. Unsupported feature warnings (num_orbits > 1, duration)
+    6. Particle initialization (single orbit)
+    7. Model and optimizer creation
+    8. Delegation to run_two_phase_training()
+    9. Training summary and W&B cleanup
+    """
+    # SECTION 1: Validation
     if config.integrator_mode == "history" and (config.history_len is None or config.history_len <= 0):
         raise ValueError("history integrator_mode requires history_len > 0")
     config.validate()
+
+    # SECTION 2: Device/dtype setup
     device = config.resolve_device()
     dtype = config.resolve_dtype()
     torch.set_default_dtype(dtype)
     config.apply_torch_settings(device)
 
+    # SECTION 3: Seed setup
     if config.seed is not None:
         torch.manual_seed(config.seed)
         np.random.seed(config.seed)
 
+    # SECTION 4: Adapter creation
     adapter = ModelAdapter(config, device=device, dtype=dtype)
 
+    # SECTION 5: W&B setup
     wandb_run = None
     wandb = None
     if config.extra.get("wandb", False):
@@ -253,51 +275,34 @@ def run_training(config: Config) -> None:
             config=config.as_wandb_dict(),
         )
 
-    def _wandb_log_value(value: object) -> Optional[float]:
-        if value is None:
-            return None
-        if torch.is_tensor(value):
-            if value.numel() != 1:
-                return None
-            return float(value.item())
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None
-
-    def _build_particle() -> torch.Tensor:
-        ptcls = generate_random_ic(
-            num_particles=config.num_particles,
-            dim=config.dim,
-            mass=config.mass,
-            pos_scale=config.pos_scale,
-            vel_scale=config.vel_scale,
-            seed=config.seed,
-        )
-        return ptcls
-
+    # SECTION 6: Unsupported feature warnings
     if config.num_orbits > 1:
-        particles = []
-        histories = []
-        for i in range(config.num_orbits):
-            ptcls = _build_particle()
-            particle = make_particle(ptcls, device=device, dtype=dtype)
-            particle.current_time = torch.tensor(0.0, device=device, dtype=dtype)
-            particles.append(particle)
-            if adapter.history_enabled:
-                hb = HistoryBuffer(history_len=config.history_len, feature_type=config.feature_type)
-                hb.push(particle.clone_detached())
-                histories.append(hb)
-        batch_state = stack_particles(particles)
-        input_dim = adapter.input_dim_from_state(batch_state, histories=histories) if adapter.history_enabled else adapter.input_dim_from_state(batch_state)
-    else:
-        ptcls = _build_particle()
-        particle = make_particle(ptcls, device=device, dtype=dtype)
-        particle.current_time = torch.tensor(0.0, device=device, dtype=dtype)
-        input_dim = adapter.input_dim_from_state(particle, history_buffer=adapter.history_buffer)
-        histories = None
-        batch_state = None
+        warnings.warn(
+            f"Multi-orbit training (num_orbits={config.num_orbits}) not yet supported "
+            "in two-phase training. Using single orbit.",
+            UserWarning,
+        )
+    if config.duration is not None:
+        warnings.warn(
+            f"Duration-based training (duration={config.duration}) not yet supported "
+            "in two-phase training. Using epoch count.",
+            UserWarning,
+        )
 
+    # SECTION 7: Particle initialization (single orbit)
+    ptcls = generate_random_ic(
+        num_particles=config.num_particles,
+        dim=config.dim,
+        mass=config.mass,
+        pos_scale=config.pos_scale,
+        vel_scale=config.vel_scale,
+        seed=config.seed,
+    )
+    particle = make_particle(ptcls, device=device, dtype=dtype)
+    particle.current_time = torch.tensor(0.0, device=device, dtype=dtype)
+    input_dim = adapter.input_dim_from_state(particle, history_buffer=adapter.history_buffer)
+
+    # SECTION 8: Model creation
     model = FullyConnectedNN(
         input_dim=input_dim,
         output_dim=2,
@@ -308,88 +313,41 @@ def run_training(config: Config) -> None:
     ).to(device)
     model.to(dtype=dtype)
 
+    # SECTION 9: Optimizer creation
     optimizer = torch.optim.Adam(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
 
-    start_time = time.perf_counter()
-    epoch = 0
-    while epoch < config.epochs:
-        if config.duration is not None and (time.perf_counter() - start_time) >= config.duration:
-            break
-        if config.num_orbits > 1:
-            if adapter.history_enabled:
-                loss, logs, _ = loss_fn_batch_history_batch(
-                    model,
-                    batch_state,
-                    histories,
-                    n_steps=config.n_steps,
-                    rel_loss_bound=config.rel_loss_bound,
-                    E_lower=config.E_lower,
-                    E_upper=config.E_upper,
-                    L_lower=config.L_lower,
-                    L_upper=config.L_upper,
-                    return_particle=True,
-                )
-            else:
-                loss, logs, _ = loss_fn_batch(
-                    model,
-                    batch_state,
-                    n_steps=config.n_steps,
-                    rel_loss_bound=config.rel_loss_bound,
-                    E_lower=config.E_lower,
-                    E_upper=config.E_upper,
-                    return_particle=True,
-                )
-        else:
-            if adapter.history_enabled:
-                loss, logs, _ = loss_fn_batch_history(
-                    model,
-                    particle,
-                    adapter.history_buffer,
-                    n_steps=config.n_steps,
-                    rel_loss_bound=config.rel_loss_bound,
-                    E_lower=config.E_lower,
-                    E_upper=config.E_upper,
-                    L_lower=config.L_lower,
-                    L_upper=config.L_upper,
-                    return_particle=True,
-                )
-            else:
-                loss, logs = loss_fn_batch(
-                    model,
-                    particle,
-                    n_steps=config.n_steps,
-                    rel_loss_bound=config.rel_loss_bound,
-                    E_lower=config.E_lower,
-                    E_upper=config.E_upper,
-                )
+    # SECTION 10: Training with run_two_phase_training()
+    save_dir = pathlib.Path(project_root) / "data" / (config.save_name or "run_nbody") / "model"
+    result = run_two_phase_training(
+        model=model,
+        particle=particle,
+        optimizer=optimizer,
+        config=config,
+        adapter=adapter,
+        history_buffer=adapter.history_buffer,
+        save_dir=save_dir,
+        wandb_run=wandb_run,
+        checkpoint_interval=10,
+    )
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+    # SECTION 11: Training summary
+    print(f"\n{'='*60}")
+    print("Training Complete")
+    print(f"{'='*60}")
+    print(f"  Epochs completed: {result['epochs_completed']}")
+    print(f"  Total time: {result['total_time']:.2f}s")
+    print(f"  Convergence rate: {result['convergence_rate']:.1%}")
+    if result.get('final_metrics'):
+        final = result['final_metrics']
+        if 'trajectory_metrics' in final:
+            traj = final['trajectory_metrics']
+            print(f"  Final trajectory length: {traj.get('trajectory_length', 'N/A')}")
+        if 'generalization_metrics' in final:
+            gen = final['generalization_metrics']
+            print(f"  Final pass rate: {gen.get('final_pass_rate', 'N/A'):.1%}" if isinstance(gen.get('final_pass_rate'), (int, float)) else f"  Final pass rate: {gen.get('final_pass_rate', 'N/A')}")
+    print(f"{'='*60}\n")
 
-        if wandb_run is not None:
-            log_data = {"epoch": epoch, "loss": float(loss.item())}
-            for key in ("dt", "E0", "rel_dE", "rel_dE_mean", "rel_dL_mean"):
-                logged = _wandb_log_value(logs.get(key))
-                if logged is not None:
-                    log_data[key] = logged
-            wandb.log(log_data)
-
-        if epoch % 10 == 0 or epoch == config.epochs - 1:
-            save_dir = pathlib.Path(project_root) / "data" / (config.save_name or "run_nbody") / "model"
-            save_path = save_dir / f"model_epoch_{epoch:04d}.pt"
-            save_checkpoint(
-                save_path,
-                model,
-                optimizer,
-                epoch=epoch,
-                loss=loss,
-                logs=logs,
-                config=config,
-            )
-            print(f"epoch {epoch} loss={float(loss.item()):.6e} saved={save_path}")
-        epoch += 1
-
+    # SECTION 12: W&B cleanup
     if wandb_run is not None:
         wandb.finish()
 
