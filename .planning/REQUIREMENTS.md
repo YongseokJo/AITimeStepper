@@ -59,29 +59,29 @@ Deferred to future work.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TRAIN-01 | TBD | Pending |
-| TRAIN-02 | TBD | Pending |
-| TRAIN-03 | TBD | Pending |
-| TRAIN-04 | TBD | Pending |
-| TRAIN-05 | TBD | Pending |
-| TRAIN-06 | TBD | Pending |
-| TRAIN-07 | TBD | Pending |
-| TRAIN-08 | TBD | Pending |
-| TRAIN-09 | TBD | Pending |
-| HIST-01 | TBD | Pending |
-| HIST-02 | TBD | Pending |
-| CONF-01 | TBD | Pending |
-| CONF-02 | TBD | Pending |
-| CONF-03 | TBD | Pending |
-| INTG-01 | TBD | Pending |
-| INTG-02 | TBD | Pending |
-| INTG-03 | TBD | Pending |
+| TRAIN-01 | Phase 3 | Pending |
+| TRAIN-02 | Phase 3 | Pending |
+| TRAIN-03 | Phase 3 | Pending |
+| TRAIN-04 | Phase 3 | Pending |
+| TRAIN-05 | Phase 4 | Pending |
+| TRAIN-06 | Phase 4 | Pending |
+| TRAIN-07 | Phase 4 | Pending |
+| TRAIN-08 | Phase 5 | Pending |
+| TRAIN-09 | Phase 5 | Pending |
+| HIST-01 | Phase 2 | Pending |
+| HIST-02 | Phase 2 | Pending |
+| CONF-01 | Phase 1 | Pending |
+| CONF-02 | Phase 1 | Pending |
+| CONF-03 | Phase 1 | Pending |
+| INTG-01 | Phase 6 | Pending |
+| INTG-02 | Phase 7 | Pending |
+| INTG-03 | Phase 6 | Pending |
 
 **Coverage:**
 - v1 requirements: 17 total
-- Mapped to phases: 0
-- Unmapped: 17 (roadmap pending)
+- Mapped to phases: 17 (100%)
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-01-20*
-*Last updated: 2026-01-20 after initial definition*
+*Last updated: 2026-01-20 with phase mappings from ROADMAP.md*
