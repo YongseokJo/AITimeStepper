@@ -73,9 +73,9 @@ Deferred to future work.
 | CONF-01 | Phase 1 | **DONE** |
 | CONF-02 | Phase 1 | **DONE** |
 | CONF-03 | Phase 1 | **DONE** |
-| INTG-01 | Phase 6 | Pending |
+| INTG-01 | Phase 6 | **DONE** |
 | INTG-02 | Phase 7 | Pending |
-| INTG-03 | Phase 6 | Pending |
+| INTG-03 | Phase 6 | **DONE** |
 
 **Coverage:**
 - v1 requirements: 17 total
@@ -84,4 +84,4 @@ Deferred to future work.
 
 ---
 *Requirements defined: 2026-01-20*
-*Last updated: 2026-01-21 (Phase 5 TRAIN-08/09 complete)*
+*Last updated: 2026-01-21 (Phase 6 INTG-01/03 complete)*

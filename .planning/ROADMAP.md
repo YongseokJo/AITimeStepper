@@ -151,8 +151,10 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
-- [ ] 06-01-PLAN.md — Refactor run_training() to use run_two_phase_training()
-- [ ] 06-02-PLAN.md — Integration tests for CLI, checkpoints, and multi-orbit warning
+- [x] 06-01-PLAN.md — Refactor run_training() to use run_two_phase_training()
+- [x] 06-02-PLAN.md — Integration tests for CLI, checkpoints, and multi-orbit warning
+
+**Completed:** 2026-01-21
 
 ---
 

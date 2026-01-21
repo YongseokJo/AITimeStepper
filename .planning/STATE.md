@@ -1,8 +1,8 @@
 # STATE: AITimeStepper Training Refactor
 
 **Initialized:** 2026-01-20
-**Current Phase:** 6 (pending)
-**Overall Progress:** 5/7 phases complete
+**Current Phase:** 7 (pending)
+**Overall Progress:** 6/7 phases complete
 
 ---
 
@@ -15,20 +15,49 @@
 | 3. Part 1: Trajectory Collection | **DONE** | 4/4 | All primitives, retrain loop, orchestrator, and tests complete |
 | 4. Part 2: Generalization Training | **DONE** | 2/2 | Core functions and tests complete, verified |
 | 5. Unified Epoch Structure | **DONE** | 3/3 | Epoch orchestrator, outer loop, and tests complete |
-| 6. Integration into runner.py | Pending | 0/5 | Replace existing run_training() |
+| 6. Integration into runner.py | **DONE** | 2/2 | run_training() refactored, integration tests added |
 | 7. Cleanup Legacy Code | Pending | 0/2 | Remove old training loop |
 
 ---
 
 ## Current Work
 
-**Phase:** 6 (pending)
+**Phase:** 7 (pending)
 **Plan:** Not started
-**Status:** Phase 5 complete, ready for integration into runner.py
+**Status:** Phase 6 complete, ready for cleanup
 
 ---
 
 ## Completed Work
+
+### Phase 6: Integration into runner.py (2026-01-21, COMPLETE)
+- **PLAN-06-01**: Refactor run_training() to use run_two_phase_training()
+  - Added `import warnings` to runner.py
+  - Added `run_two_phase_training` to imports from src
+  - Refactored `run_training()` into 12 clearly-labeled sections
+  - Removed `_wandb_log_value()` helper (W&B logging in run_two_phase_training)
+  - Removed `_build_particle()` inner function (inlined)
+  - Removed multi-orbit particle initialization (replaced with warning)
+  - Removed manual training loop (replaced with single function call)
+  - Added warnings for unsupported features (num_orbits > 1, duration)
+  - Added training summary print after completion
+  - File: 387 lines (reduced from 429 due to deduplication)
+  - Commits: ee3a0a2, 2460c69
+
+- **PLAN-06-02**: Integration tests for CLI, checkpoints, and warnings
+  - Created `tests/test_runner_integration.py` (861 lines, 28 tests)
+  - TestArgumentParsing: 6 tests for CLI argument parsing
+  - TestMultiOrbitWarning: 2 tests for num_orbits > 1 warning
+  - TestDurationWarning: 2 tests for duration warning
+  - TestWandBLogging: 2 tests for W&B integration
+  - TestCheckpointContract: 3 tests for checkpoint fields
+  - TestDirectFunctionCalls: 5 tests for run_training()
+  - TestRunTrainingIntegration: 3 tests for end-to-end
+  - TestConfigFromCLI: 5 tests for config validation
+  - All 28 tests pass in ~5.6 seconds
+  - Commits: b791a8f, 8675450
+
+- **Verification**: All 6 success criteria met, INTG-01/INTG-03 requirements satisfied
 
 ### Phase 5: Unified Epoch Structure (2026-01-21, COMPLETE)
 - **PLAN-05-01**: Implement train_epoch_two_phase() orchestrator
@@ -172,7 +201,7 @@ None.
 - `/u/gkerex/projects/AITimeStepper/src/losses_history.py` - Loss functions (history)
 
 ### Next Steps
-1. Phase 6: Integration into runner.py
+1. Phase 6: Complete remaining plans (06-02 through 06-05)
 2. Phase 7: Cleanup legacy code
 
 ### Known Issues
@@ -202,4 +231,4 @@ None.
 ---
 
 *State initialized: 2026-01-20*
-*Last updated: 2026-01-21 (Phase 5 complete)*
+*Last updated: 2026-01-21 (Plan 06-01 complete)*
