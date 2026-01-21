@@ -1,8 +1,8 @@
 # STATE: AITimeStepper Training Refactor
 
 **Initialized:** 2026-01-20
-**Current Phase:** 3 (in progress)
-**Overall Progress:** 2/7 phases complete, 4/5 plans in Phase 3
+**Current Phase:** 3 (complete)
+**Overall Progress:** 3/7 phases complete
 
 ---
 
@@ -12,7 +12,7 @@
 |-------|--------|----------------|-------|
 | 1. Configuration Parameters | **DONE** | 2/2 | Added steps_per_epoch, validation for training params |
 | 2. History Buffer Zero-Padding | **DONE** | 2/2 | Zero-padding in all feature extraction methods |
-| 3. Part 1: Trajectory Collection | **In Progress** | 4/5 | Plans 03-01 to 03-04 complete, Plan 03-05 remaining |
+| 3. Part 1: Trajectory Collection | **DONE** | 4/4 | All primitives, retrain loop, orchestrator, and tests complete |
 | 4. Part 2: Generalization Training | Pending | 0/4 | Train on minibatches until convergence |
 | 5. Unified Epoch Structure | Pending | 0/4 | Combine Part 1 + Part 2 |
 | 6. Integration into runner.py | Pending | 0/5 | Replace existing run_training() |
@@ -22,9 +22,8 @@
 
 ## Current Work
 
-**Phase:** 3 (in progress)
-**Plan:** 03-04 (completed)
-**Status:** Unit tests for trajectory collection complete, ready for Plan 03-05 (history buffer integration)
+**Phase:** 3 (complete)
+**Status:** All 4 plans executed, verified, ready for Phase 4
 
 ---
 
@@ -116,13 +115,11 @@ None.
 - `/u/gkerex/projects/AITimeStepper/src/losses_history.py` - Loss functions (history)
 
 ### Next Steps
-1. Phase 3: Complete trajectory collection loop implementation
-   - [x] Plan 03-01: Core trajectory primitives (complete)
-   - [x] Plan 03-02: Retrain loop (complete)
-   - [x] Plan 03-03: Trajectory orchestrator (complete)
-   - [x] Plan 03-04: Unit tests (complete)
-   - Plan 03-05: History buffer integration (update history after accept)
-2. Then Phase 4: Implement Part 2 generalization training
+1. Phase 4: Implement Part 2 generalization training
+   - Design minibatch sampling from trajectory buffer
+   - Implement single-step loss evaluation
+   - Add convergence check (all-pass criterion)
+   - Test convergence on synthetic trajectory
 
 ### Known Issues
 - Zero-padding in HistoryBuffer produces NaN for acceleration features when mass is zero
@@ -149,4 +146,4 @@ None.
 ---
 
 *State initialized: 2026-01-20*
-*Last updated: 2026-01-21 (Phase 3, Plan 03-04 complete)*
+*Last updated: 2026-01-21 (Phase 3 complete, verified)*

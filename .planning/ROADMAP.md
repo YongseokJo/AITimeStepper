@@ -76,10 +76,12 @@ Plans:
 **Plans:** 4 plans
 
 Plans:
-- [ ] 03-01-PLAN.md — Core single-step prediction and energy threshold functions
-- [ ] 03-02-PLAN.md — Accept/reject retrain loop implementation
-- [ ] 03-03-PLAN.md — Trajectory collection orchestrator with warmup discard
-- [ ] 03-04-PLAN.md — Unit tests for trajectory collection
+- [x] 03-01-PLAN.md — Core single-step prediction and energy threshold functions
+- [x] 03-02-PLAN.md — Accept/reject retrain loop implementation
+- [x] 03-03-PLAN.md — Trajectory collection orchestrator with warmup discard
+- [x] 03-04-PLAN.md — Unit tests for trajectory collection
+
+**Completed:** 2026-01-21
 
 ---
 
@@ -244,4 +246,4 @@ Phase 6 (Integration) → Phase 7 (Cleanup)
 ---
 
 *Roadmap created: 2026-01-20*
-*Last updated: 2026-01-20 (Phase 3 planned)*
+*Last updated: 2026-01-21 (Phase 3 complete)*
