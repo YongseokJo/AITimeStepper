@@ -142,3 +142,4 @@ rclone/rclone
 *.last_run_code
 
 .AGENTS.md
+.planning/intel/
