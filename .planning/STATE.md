@@ -2,7 +2,7 @@
 
 **Initialized:** 2026-01-20
 **Current Phase:** 2 (in progress)
-**Overall Progress:** 1/7 phases complete (Phase 2: 1/3 plans)
+**Overall Progress:** 1/7 phases complete (Phase 2: 2/3 plans)
 
 ---
 
@@ -11,7 +11,7 @@
 | Phase | Status | Plans Complete | Notes |
 |-------|--------|----------------|-------|
 | 1. Configuration Parameters | **DONE** | 2/2 | Added steps_per_epoch, validation for training params |
-| 2. History Buffer Zero-Padding | **IN PROGRESS** | 1/3 | Plan 02-01 complete: _zero_state() factory + zero-padding |
+| 2. History Buffer Zero-Padding | **IN PROGRESS** | 2/3 | Plans 02-01, 02-02 complete: zero-padding + extended tests |
 | 3. Part 1: Trajectory Collection | Pending | 0/5 | Implement accept/reject loop |
 | 4. Part 2: Generalization Training | Pending | 0/4 | Train on minibatches until convergence |
 | 5. Unified Epoch Structure | Pending | 0/4 | Combine Part 1 + Part 2 |
@@ -23,8 +23,8 @@
 ## Current Work
 
 **Phase:** 2 (History Buffer Zero-Padding)
-**Plan:** 02-01 completed, 02-02 and 02-03 pending
-**Status:** Zero-padding implementation complete, need to update model adapter and tests
+**Plan:** 02-01 and 02-02 completed, 02-03 pending
+**Status:** Zero-padding and testing complete, need to update model adapter and integration tests
 
 ---
 
@@ -42,6 +42,11 @@
   - **Commit f168818**: Implemented zero-padding in features_for(), features_for_batch(), and features_for_histories()
   - **Commit d7f744d**: Added `_test_zero_padding()` unit test function
   - **Impact**: Cleaner signal to model during bootstrap (zeros indicate "no data" vs false repetition)
+- **PLAN-02-02**: Extended test coverage for batch methods
+  - **Commit eef826b**: Extended `_test_zero_padding()` with 3 new test cases
+  - **Tests added**: features_for_batch(), features_for_histories(), delta_mag feature type
+  - **Discovery**: Wave 1 executor already implemented zero-padding in all three methods during Plan 02-01
+  - **Impact**: Comprehensive test coverage for all feature extraction methods and feature types
 
 ---
 
@@ -70,7 +75,7 @@ None.
 - `/u/gkerex/projects/AITimeStepper/src/losses_history.py` - Loss functions (history)
 
 ### Next Steps
-1. Complete Phase 2 remaining plans (02-02, 02-03)
+1. Complete Phase 2 remaining plan (02-03: model adapter and integration tests)
 2. Then Phase 3: Implement trajectory collection loop
 3. Then Phase 4: Implement generalization training
 
@@ -88,4 +93,4 @@ None.
 ---
 
 *State initialized: 2026-01-20*
-*Last updated: 2026-01-20 (Phase 2 Plan 02-01 complete)*
+*Last updated: 2026-01-20 (Phase 2 Plan 02-02 complete)*
