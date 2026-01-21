@@ -99,11 +99,11 @@ Plans:
 5. Convergence criterion: energy residual < threshold for entire batch
 6. Returns convergence status and iteration count
 
-**Estimated Plans:** 3-4
-- Design minibatch sampling from trajectory buffer
-- Implement single-step loss evaluation
-- Add convergence check (all-pass criterion)
-- Test convergence on synthetic trajectory
+**Plans:** 2 plans
+
+Plans:
+- [ ] 04-01-PLAN.md — Implement generalize_on_trajectory with minibatch sampling
+- [ ] 04-02-PLAN.md — Unit tests for generalization training
 
 ---
 
@@ -246,4 +246,4 @@ Phase 6 (Integration) → Phase 7 (Cleanup)
 ---
 
 *Roadmap created: 2026-01-20*
-*Last updated: 2026-01-21 (Phase 3 complete)*
+*Last updated: 2026-01-21 (Phase 4 planned)*
