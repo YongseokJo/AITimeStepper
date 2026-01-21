@@ -29,30 +29,30 @@ Each epoch combines both parts. Training converges when all samples pass energy 
 4. CLI args auto-generated via `add_cli_args()` for new fields
 5. Parameters serialized in checkpoint contract (to_dict/from_dict)
 
-**Estimated Plans:** 2-3
-- Add config fields with validation
-- Add CLI argument generation
-- Test serialization roundtrip
+**Plans:** 2 plans
+- [x] 01-01-PLAN.md — Add config fields with validation
+- [x] 01-02-PLAN.md — CLI argument generation and serialization tests
 
 ---
 
 ## Phase 2: History Buffer Zero-Padding
 
-**Goal:** Replace oldest-state padding with zero-padding for history bootstrap
+**Goal:** Replace oldest-state padding with zero-padding for history bootstrap (HIST-01)
 
-**Requirements:** HIST-01, HIST-02
+**Requirements:** HIST-01 (HIST-02 deferred to Phase 3 training loop)
 
 **Success Criteria:**
 1. `HistoryBuffer.features_for()` pads with zeros when history incomplete
 2. Zero-padding applies to all feature types (basic, rich, delta_mag)
-3. `features_for_histories()` (batch version) uses zero-padding
-4. Warmup steps discarded once `history_len` steps collected
+3. `features_for_batch()` uses zero-padding
+4. `features_for_histories()` (batch version) uses zero-padding
 5. Tests confirm zero vectors for initial incomplete history
 
-**Estimated Plans:** 2-3
-- Modify padding logic in HistoryBuffer
-- Handle warmup discard logic
-- Add unit tests for padding behavior
+**Plans:** 2 plans
+
+Plans:
+- [ ] 02-01-PLAN.md — Add _zero_state() method and modify features_for()
+- [ ] 02-02-PLAN.md — Modify features_for_batch() and features_for_histories()
 
 ---
 
@@ -60,7 +60,7 @@ Each epoch combines both parts. Training converges when all samples pass energy 
 
 **Goal:** Implement iterative single-step collection with accept/reject based on energy threshold
 
-**Requirements:** TRAIN-01, TRAIN-02, TRAIN-03, TRAIN-04
+**Requirements:** TRAIN-01, TRAIN-02, TRAIN-03, TRAIN-04, HIST-02
 
 **Success Criteria:**
 1. Function `collect_trajectory_step()` predicts dt, integrates 1 step, checks energy
@@ -69,6 +69,7 @@ Each epoch combines both parts. Training converges when all samples pass energy 
 4. Collects N steps per epoch (configurable via `steps_per_epoch`)
 5. No retry limit - iterates until energy threshold satisfied
 6. Returns list of accepted (state, dt) tuples
+7. Warmup steps (first history_len) discarded once buffer fills (HIST-02)
 
 **Estimated Plans:** 4-5
 - Design trajectory collection function signature
@@ -180,7 +181,7 @@ Each epoch combines both parts. Training converges when all samples pass energy 
 | **TRAIN-08** | 5 | One epoch = Part 1 (collection) + Part 2 (generalization) |
 | **TRAIN-09** | 5 | Run for fixed N epochs (configurable) |
 | **HIST-01** | 2 | Pad history with zeros for initial steps |
-| **HIST-02** | 2 | Discard warmup steps once real trajectory exists |
+| **HIST-02** | 3 | Discard warmup steps once real trajectory exists |
 | **CONF-01** | 1 | Energy threshold as configurable parameter |
 | **CONF-02** | 1 | Steps per epoch as configurable parameter |
 | **CONF-03** | 1 | Total epochs as configurable parameter |
@@ -235,8 +236,9 @@ Phase 6 (Integration) → Phase 7 (Cleanup)
 - Single shared model for both parts (no separate models)
 - Simulation mode must continue to work with new checkpoints
 - Multi-orbit training supported but start testing with single-orbit
+- HIST-02 (warmup discard) moved to Phase 3 - training loop concern, not buffer concern
 
 ---
 
 *Roadmap created: 2026-01-20*
-*Last updated: 2026-01-20 (initial creation)*
+*Last updated: 2026-01-20 (Phase 2 planned)*
