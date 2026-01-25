@@ -287,7 +287,7 @@ class TestTrainEpochTwoPhase:
                 'mean_retrain_iterations': 1.0,
                 'mean_energy_error': 0.001,
                 'max_retrain_iterations': 2,
-            })
+            }, simple_particle)
 
             mock_part2.return_value = (True, 5, {
                 'mean_rel_dE': 0.001,

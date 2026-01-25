@@ -1,0 +1,41 @@
+save_name = "nbody"
+num_particles = 2
+history_len = 0
+feature_type = "delta_mag"
+normalize_inputs = true
+norm_mode = "auto"
+
+dtype = "float64"
+
+[train]
+#epochs = 10000
+epochs = 1000
+n_steps = 1
+energy_threshold = 3e-3
+steps_per_epoch = 1
+wandb = true
+retrain_log_every = 100
+max_retrain_steps = 1e6
+debug = true
+movie = true
+
+E_upper = 1e-3
+E_lower = 1e-5
+L_upper = 1e-5
+L_lower = 1e-7
+ic_path = "/u/gkerex/projects/AITimeStepper/data/ics/2body_elliptic_medium_e0.60.npy"
+
+
+[simulate]
+use_train_ic = true
+multi_orbit_sim = false
+#num_orbits = 1
+integrator_mode = "ml"
+Nperiod = 3
+#steps = 10000
+#steps = 100
+movie = true
+movie_max_frames = 1000
+#movie_fps = 10 
+#movie_dpi = 60
+#ic_path = "/u/gkerex/projects/AITimeStepper/data/ics/2body_elliptic_medium_e0.60.npy"

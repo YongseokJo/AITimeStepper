@@ -13,7 +13,7 @@ Phase 3 of AITimeStepper training refactor.
 
 import math
 import warnings
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 
@@ -33,6 +33,7 @@ def attempt_single_step(
     config: Config,
     adapter: ModelAdapter,
     history_buffer: Optional[HistoryBuffer] = None,
+    active_mask: Optional[torch.Tensor] = None,
 ) -> Tuple[ParticleTorch, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Predict dt, integrate one step, return new state and energy info.
@@ -49,6 +50,8 @@ def attempt_single_step(
         config: Configuration with energy_threshold
         adapter: ModelAdapter for feature construction
         history_buffer: Optional history for temporal features
+        active_mask: Optional boolean/float mask (1.0=active, 0.0=inactive).
+                     Inactive particles get dt=0.
 
     Returns:
         (advanced_particle, dt, E0, E1) where:
@@ -80,6 +83,15 @@ def attempt_single_step(
     # Add epsilon to ensure positive dt
     dt = dt_raw + EPS
 
+    # Mask dt for inactive particles
+    if active_mask is not None:
+        # active_mask should be broadcastable to dt
+        if dt.dim() == 0 and active_mask.numel() > 1:
+            dt = dt.expand_as(active_mask)
+        # Ensure mask is float/compatible
+        mask = active_mask.to(dt.dtype)
+        dt = dt * mask
+
     # Compute initial energy
     E0 = p.total_energy_batch(G=1.0)
     # Normalize to 1D if scalar (single system case)
@@ -89,8 +101,10 @@ def attempt_single_step(
     # Update particle dt
     p.update_dt(dt)
 
-    # Integrate one step
-    p.evolve_batch(G=1.0)
+    # Integrate for configured number of steps
+    n_steps = max(1, int(config.n_steps))
+    for _ in range(n_steps):
+        p.evolve_batch(G=1.0)
 
     # Compute final energy
     E1 = p.total_energy_batch(G=1.0)
@@ -104,6 +118,7 @@ def check_energy_threshold(
     E0: torch.Tensor,
     E1: torch.Tensor,
     threshold: float,
+    active_mask: Optional[torch.Tensor] = None,
 ) -> Tuple[bool, torch.Tensor]:
     """
     Check if relative energy error is within threshold.
@@ -115,6 +130,7 @@ def check_energy_threshold(
         E0: Initial energy (tensor, possibly batched)
         E1: Final energy (tensor, same shape as E0)
         threshold: Relative energy error threshold (e.g., 2e-4)
+        active_mask: Optional mask to ignore energy error of inactive particles.
 
     Returns:
         (passed, rel_dE) where:
@@ -133,6 +149,11 @@ def check_energy_threshold(
     # Compute relative error
     rel_dE = torch.abs((E1 - E0) / E0_safe)
 
+    if active_mask is not None:
+        mask = active_mask.to(rel_dE.dtype)
+        # Zero out error for inactive particles
+        rel_dE = rel_dE * mask
+
     # For single-step collection, compare scalar value
     # Handle both single system and batched cases
     if rel_dE.numel() == 1:
@@ -148,6 +169,7 @@ def compute_single_step_loss(
     E0: torch.Tensor,
     E1: torch.Tensor,
     config: Config,
+    active_mask: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     Compute loss for a single integration step.
@@ -161,6 +183,7 @@ def compute_single_step_loss(
         E0: Initial energy
         E1: Final energy
         config: Config with E_lower, E_upper bounds
+        active_mask: Optional mask to compute loss only for active particles.
 
     Returns:
         Scalar loss tensor (mean over batch if batched)
@@ -192,6 +215,16 @@ def compute_single_step_loss(
         math.log(config.E_upper)
     )
 
+    if active_mask is not None:
+        mask = active_mask.to(loss.dtype)
+        loss = loss * mask
+        # Mean over active particles only
+        active_count = mask.sum()
+        if active_count > 0:
+            return loss.sum() / active_count
+        else:
+            return torch.tensor(0.0, device=loss.device)
+
     # Return mean for batched case
     return loss.mean()
 
@@ -204,6 +237,10 @@ def collect_trajectory_step(
     adapter: ModelAdapter,
     history_buffer: Optional[HistoryBuffer] = None,
     max_retrain_warn: int = 1000,
+    wandb_run: Optional[Any] = None,
+    retrain_log_every: int = 100,
+    step_idx: Optional[int] = None,
+    active_mask: Optional[torch.Tensor] = None,
 ) -> Tuple[ParticleTorch, float, Dict[str, Any]]:
     """
     Collect one accepted trajectory step with retrain loop.
@@ -225,6 +262,7 @@ def collect_trajectory_step(
         adapter: ModelAdapter for feature construction
         history_buffer: Optional history buffer
         max_retrain_warn: Issue warning every N iterations (default=1000)
+        active_mask: Optional mask for multi-orbit stopping
 
     Returns:
         (accepted_particle, accepted_dt, metrics) where:
@@ -239,29 +277,83 @@ def collect_trajectory_step(
         >>> print(f"Accepted step with dt={dt:.6f} after {metrics['retrain_iterations']} retrains")
     """
     retrain_iterations = 0
+    retrain_loss_sum = 0.0
+    retrain_loss_max = 0.0
+    retrain_rel_dE_sum = 0.0
+    retrain_rel_dE_max = 0.0
+    retrain_rel_dE_count = 0
+    last_loss_value = 0.0
+
+    wandb = None
+    if wandb_run is not None:
+        try:
+            import wandb as wandb_lib
+            wandb = wandb_lib
+        except ImportError:
+            warnings.warn("wandb_run provided but wandb not installed; logging disabled")
+            wandb_run = None
 
     while True:
         # 1. Attempt a step (creates fresh clone internally)
         p_attempt, dt, E0, E1 = attempt_single_step(
-            model, particle, config, adapter, history_buffer
+            model, particle, config, adapter, history_buffer, active_mask=active_mask
         )
 
         # 2. Check energy threshold
-        passed, rel_dE = check_energy_threshold(E0, E1, config.energy_threshold)
+        passed, rel_dE = check_energy_threshold(E0, E1, config.energy_threshold, active_mask=active_mask)
+        rel_dE_value = rel_dE.item() if rel_dE.numel() == 1 else rel_dE.mean().item()
+        retrain_rel_dE_sum += rel_dE_value
+        retrain_rel_dE_max = max(retrain_rel_dE_max, rel_dE_value)
+        retrain_rel_dE_count += 1
 
         if passed:
             # ACCEPT: energy within threshold
             metrics = {
                 'retrain_iterations': retrain_iterations,
                 'reject_count': retrain_iterations,
-                'final_energy_error': rel_dE.item() if rel_dE.numel() == 1 else rel_dE.mean().item(),
+                'final_energy_error': rel_dE_value,
+                'retrain_loss_mean': (
+                    retrain_loss_sum / retrain_iterations if retrain_iterations > 0 else 0.0
+                ),
+                'retrain_loss_max': retrain_loss_max,
+                'retrain_rel_dE_mean': (
+                    retrain_rel_dE_sum / retrain_rel_dE_count
+                    if retrain_rel_dE_count > 0
+                    else 0.0
+                ),
+                'retrain_rel_dE_max': retrain_rel_dE_max,
+                'last_retrain_loss': last_loss_value,
             }
             # Extract dt as float for return
             dt_value = dt.item() if dt.numel() == 1 else dt.mean().item()
+            if wandb_run is not None and wandb is not None:
+                log_data = {
+                    'part1/step/retrain_iterations': retrain_iterations,
+                    'part1/step/final_energy_error': rel_dE_value,
+                    'part1/step/retrain_loss_mean': metrics['retrain_loss_mean'],
+                    'part1/step/retrain_loss_max': metrics['retrain_loss_max'],
+                    'part1/step/retrain_rel_dE_mean': metrics['retrain_rel_dE_mean'],
+                    'part1/step/retrain_rel_dE_max': metrics['retrain_rel_dE_max'],
+                    'part1/step/accepted_dt': dt_value,
+                }
+                if step_idx is not None:
+                    log_data['part1/step/step_idx'] = step_idx
+                wandb.log(log_data)
+            if config.debug:
+                print(
+                    "accept_step "
+                    f"step_idx={step_idx} retrain_iters={retrain_iterations} "
+                    f"final_rel_dE={rel_dE_value:.4e} last_loss={last_loss_value:.4e} "
+                    f"dt={dt_value:.4e}"
+                )
             return p_attempt, dt_value, metrics
 
         # REJECT: retrain on same state
-        loss = compute_single_step_loss(E0, E1, config)
+        loss = compute_single_step_loss(E0, E1, config, active_mask=active_mask)
+        loss_value = loss.item()
+        last_loss_value = loss_value
+        retrain_loss_sum += loss_value
+        retrain_loss_max = max(retrain_loss_max, loss_value)
 
         optimizer.zero_grad()
         loss.backward()
@@ -269,12 +361,53 @@ def collect_trajectory_step(
 
         retrain_iterations += 1
 
+        if (
+            wandb_run is not None
+            and wandb is not None
+            and retrain_log_every > 0
+            and retrain_iterations % retrain_log_every == 0
+        ):
+            grad_norm_sq = 0.0
+            param_norm_sq = 0.0
+            for param in model.parameters():
+                if param.grad is not None:
+                    grad_norm_sq += param.grad.detach().pow(2).sum().item()
+                param_norm_sq += param.detach().pow(2).sum().item()
+            grad_norm = math.sqrt(grad_norm_sq)
+            param_norm = math.sqrt(param_norm_sq)
+            lr = optimizer.param_groups[0].get("lr", 0.0) if optimizer.param_groups else 0.0
+            log_data = {
+                'part1/retrain/loss': loss_value,
+                'part1/retrain/rel_dE': rel_dE_value,
+                'part1/retrain/iteration': retrain_iterations,
+                'part1/retrain/grad_norm': grad_norm,
+                'part1/retrain/param_norm': param_norm,
+                'part1/retrain/lr': lr,
+            }
+            if step_idx is not None:
+                log_data['part1/retrain/step_idx'] = step_idx
+            wandb.log(log_data)
+            if config.debug:
+                print(
+                    "retrain_log "
+                    f"step_idx={step_idx} iter={retrain_iterations} "
+                    f"loss={loss_value:.4e} rel_dE={rel_dE_value:.4e} "
+                    f"grad_norm={grad_norm:.4e} lr={lr:.4e}"
+                )
+
         # Issue warning for long-running loops
         if retrain_iterations > 0 and retrain_iterations % max_retrain_warn == 0:
+            val = rel_dE.item() if rel_dE.numel() == 1 else rel_dE.mean().item()
             warnings.warn(
                 f"collect_trajectory_step: {retrain_iterations} retrain iterations "
-                f"(rel_dE={rel_dE.item():.2e}, threshold={config.energy_threshold:.2e})",
+                f"(rel_dE={val:.2e}, threshold={config.energy_threshold:.2e})",
                 RuntimeWarning,
+            )
+        if config.max_retrain_steps and retrain_iterations >= config.max_retrain_steps:
+            val = rel_dE.item() if rel_dE.numel() == 1 else rel_dE.mean().item()
+            raise RuntimeError(
+                "collect_trajectory_step exceeded max_retrain_steps="
+                f"{config.max_retrain_steps} (rel_dE={val:.2e})."
             )
 
 
@@ -285,7 +418,14 @@ def collect_trajectory(
     config: Config,
     adapter: ModelAdapter,
     history_buffer: Optional[HistoryBuffer] = None,
-) -> Tuple[List[Tuple[ParticleTorch, float]], Dict[str, Any]]:
+    wandb_run: Optional[Any] = None,
+    retrain_log_every: int = 100,
+    include_warmup: bool = False,
+    return_final_particle: bool = False,
+) -> Union[
+    Tuple[List[Tuple[ParticleTorch, float, Optional[torch.Tensor]]], Dict[str, Any]],
+    Tuple[List[Tuple[ParticleTorch, float, Optional[torch.Tensor]]], Dict[str, Any], ParticleTorch]
+]:
     """
     Collect a trajectory of N validated steps for one epoch.
 
@@ -310,10 +450,11 @@ def collect_trajectory(
 
     Returns:
         (trajectory, epoch_metrics) where:
-        - trajectory: List of (ParticleTorch, dt) tuples (warmup excluded)
+        - trajectory: List of (ParticleTorch, dt, mask) tuples (warmup excluded by default)
         - epoch_metrics: dict with 'total_steps', 'warmup_discarded',
                          'trajectory_length', 'mean_retrain_iterations',
                          'mean_energy_error', 'max_retrain_iterations'
+        - final_particle: last accepted particle if return_final_particle is True
 
     Example:
         >>> trajectory, metrics = collect_trajectory(
@@ -339,13 +480,31 @@ def collect_trajectory(
             UserWarning,
         )
 
-    trajectory: List[Tuple[ParticleTorch, float]] = []
+    trajectory: List[Tuple[ParticleTorch, float, Optional[torch.Tensor]]] = []
     all_metrics: List[Dict[str, Any]] = []
 
     # Current particle state (will be updated each step)
     current_particle = particle
 
     for step_idx in range(config.steps_per_epoch):
+        active_mask = None
+        if config.stop_at_period:
+            t = current_particle.current_time
+            T = current_particle.period
+            # Ensure proper shapes for comparison
+            # If t is scalar and T is tensor (batched), or vice versa
+            if t.dim() == 0 and T.dim() > 0:
+                t = t.expand_as(T)
+            if T.dim() == 0 and t.dim() > 0:
+                T = T.expand_as(t)
+            
+            # Create boolean mask: active where current_time < period
+            active_mask = (t < T).float()
+            
+            # If all particles have finished their periods, stop collection
+            if active_mask.sum() == 0:
+                break
+
         # Collect one accepted step
         accepted_particle, accepted_dt, step_metrics = collect_trajectory_step(
             model=model,
@@ -354,6 +513,10 @@ def collect_trajectory(
             config=config,
             adapter=adapter,
             history_buffer=history_buffer,
+            wandb_run=wandb_run,
+            retrain_log_every=retrain_log_every,
+            step_idx=step_idx,
+            active_mask=active_mask,
         )
 
         # Always push to history buffer (needed for next step's features)
@@ -368,13 +531,12 @@ def collect_trajectory(
         # Track metrics from all steps (including warmup)
         all_metrics.append(step_metrics)
 
-        # HIST-02: Discard warmup steps (first history_len)
-        # Only add to trajectory if we're past the warmup phase
-        if step_idx >= warmup_len:
-            # Store detached copy with accepted dt
-            trajectory.append((accepted_particle.clone_detached(), accepted_dt))
+        # HIST-02: Discard warmup steps (first history_len) unless requested
+        if include_warmup or step_idx >= warmup_len:
+            trajectory.append((accepted_particle.clone_detached(), accepted_dt, active_mask))
 
     # Aggregate epoch metrics
+    energy_error_list = [m['final_energy_error'] for m in all_metrics]
     epoch_metrics = {
         'total_steps': config.steps_per_epoch,
         'warmup_discarded': warmup_len,
@@ -384,10 +546,24 @@ def collect_trajectory(
             if all_metrics else 0.0
         ),
         'mean_energy_error': (
-            sum(m['final_energy_error'] for m in all_metrics) / len(all_metrics)
+            sum(energy_error_list) / len(energy_error_list)
             if all_metrics else 0.0
         ),
+        'min_energy_error': min(energy_error_list, default=0.0),
+        'max_energy_error': max(energy_error_list, default=0.0),
         'max_retrain_iterations': max((m['retrain_iterations'] for m in all_metrics), default=0),
+        'mean_retrain_loss': (
+            sum(m['retrain_loss_mean'] for m in all_metrics) / len(all_metrics)
+            if all_metrics else 0.0
+        ),
+        'max_retrain_loss': max((m['retrain_loss_max'] for m in all_metrics), default=0.0),
+        'mean_retrain_rel_dE': (
+            sum(m['retrain_rel_dE_mean'] for m in all_metrics) / len(all_metrics)
+            if all_metrics else 0.0
+        ),
+        'max_retrain_rel_dE': max((m['retrain_rel_dE_max'] for m in all_metrics), default=0.0),
     }
 
+    if return_final_particle:
+        return trajectory, epoch_metrics, current_particle
     return trajectory, epoch_metrics

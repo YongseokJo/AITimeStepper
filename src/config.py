@@ -20,6 +20,7 @@ class Config:
     rel_loss_bound: float = 1e-5
     energy_threshold: float = 2e-4
     steps_per_epoch: int = 1
+    max_retrain_steps: int = 1000
     replay_steps: int = 1000
     replay_batch_size: int = 512
     min_replay_size: int = 2
@@ -33,6 +34,12 @@ class Config:
     # Feature / history
     history_len: int = 0
     feature_type: str = "delta_mag"
+    normalize_inputs: bool = False
+    norm_mode: str = "auto"  # "auto" or "manual"
+    norm_L0: Optional[float] = None
+    norm_V0: Optional[float] = None
+    norm_A0: Optional[float] = None
+    norm_T0: Optional[float] = None
 
     # Simulation / integrator
     integrator_mode: str = "analytic"
@@ -55,6 +62,7 @@ class Config:
 
     # Multi-orbit sampling (history multi)
     num_orbits: int = 8
+    stop_at_period: bool = False
     e_min: float = 0.6
     e_max: float = 0.95
     a_min: float = 0.8
@@ -66,6 +74,13 @@ class Config:
     tf32: bool = False
     compile: bool = False
     detect_anomaly: bool = False
+
+    # Model Architecture
+    hidden_dims: Iterable[int] = field(default_factory=lambda: [200, 1000, 1000, 200])
+    activation: str = "tanh"
+    dropout: float = 0.2
+    fourier_scale: float = -1.0
+    fourier_dim: int = 256
 
     # Optimizer phases
     adam_epochs: int = 0
@@ -81,6 +96,13 @@ class Config:
     debug: bool = False
     debug_every: int = 1
     debug_replay_every: int = 10
+
+    # Movie generation (simulation)
+    movie: bool = False
+    movie_dir: Optional[str] = None
+    movie_max_frames: int = 1000
+    movie_fps: int = 30
+    movie_dpi: int = 120
 
     # Checkpoint / model loading
     model_path: Optional[str] = None
@@ -112,10 +134,21 @@ class Config:
             add_arg("--rel-loss-bound", type=float, default=cls.rel_loss_bound, help="relative loss bound")
             add_arg("--energy-threshold", type=float, default=cls.energy_threshold, help="accept/reject energy threshold")
             add_arg("--steps-per-epoch", type=int, default=cls.steps_per_epoch, help="number of training steps per epoch")
+            add_arg(
+                "--max-retrain-steps",
+                type=int,
+                default=cls.max_retrain_steps,
+                help="max retrain iterations per step (0 = unlimited)",
+            )
             add_arg("--replay-steps", type=int, default=cls.replay_steps, help="max replay optimization steps per epoch")
             add_arg("--replay-batch-size", type=int, default=cls.replay_batch_size, help="replay batch size")
             add_arg("--replay-batch", type=int, default=cls.replay_batch_size, help="replay buffer batch size")
             add_arg("--min-replay-size", type=int, default=cls.min_replay_size, help="min replay buffer size before training")
+            add_arg("--hidden-dims", type=int, nargs="+", default=[200, 1000, 1000, 200], help="hidden layer dimensions")
+            add_arg("--activation", type=str, default="tanh", help="activation function (tanh, relu, etc.)")
+            add_arg("--dropout", type=float, default=0.2, help="dropout probability")
+            add_arg("--fourier-scale", type=float, default=-1.0, help="scale of gaussian fourier features (<0 to disable)")
+            add_arg("--fourier-dim", type=int, default=256, help="dimension of fourier feature embedding")
 
         if want("bounds"):
             add_arg("--E_lower", type=float, default=cls.E_lower, help="lower energy bound for loss calculation")
@@ -132,6 +165,18 @@ class Config:
                 default=cls.feature_type,
                 help="feature type per state",
             )
+            add_arg("--normalize-inputs", action="store_true", help="normalize model inputs")
+            add_arg(
+                "--norm-mode",
+                type=str,
+                choices=["auto", "manual"],
+                default=cls.norm_mode,
+                help="normalization mode (auto computes from ICs)",
+            )
+            add_arg("--norm-L0", type=float, default=cls.norm_L0, help="manual length scale")
+            add_arg("--norm-V0", type=float, default=cls.norm_V0, help="manual velocity scale")
+            add_arg("--norm-A0", type=float, default=cls.norm_A0, help="manual acceleration scale")
+            add_arg("--norm-T0", type=float, default=cls.norm_T0, help="manual time scale")
 
         if want("orbit"):
             add_arg("--eccentricity", "-e", type=float, default=cls.eccentricity, help="eccentricity for generate_IC")
@@ -139,6 +184,7 @@ class Config:
 
         if want("multi"):
             add_arg("--num-orbits", type=int, default=cls.num_orbits, help="number of independent orbits to batch together")
+            add_arg("--stop-at-period", action="store_true", help="stop trajectory collection when orbit period is reached")
             add_arg("--e-min", type=float, default=cls.e_min, help="minimum eccentricity for sampling initial conditions")
             add_arg("--e-max", type=float, default=cls.e_max, help="maximum eccentricity for sampling initial conditions")
             add_arg("--a-min", type=float, default=cls.a_min, help="minimum semi-major axis for sampling initial conditions")
@@ -171,6 +217,11 @@ class Config:
             add_arg("--mass", type=float, default=cls.mass, help="per-particle mass for random ICs")
             add_arg("--pos-scale", type=float, default=cls.pos_scale, help="position scale for random ICs")
             add_arg("--vel-scale", type=float, default=cls.vel_scale, help="velocity scale for random ICs")
+            add_arg("--movie", action="store_true", help="save MP4 movie of the simulation")
+            add_arg("--movie-dir", type=str, default=cls.movie_dir, help="output directory for movies")
+            add_arg("--movie-max-frames", type=int, default=cls.movie_max_frames, help="max frames for movie downsampling (<=0 to include all frames)")
+            add_arg("--movie-fps", type=int, default=cls.movie_fps, help="movie frames per second")
+            add_arg("--movie-dpi", type=int, default=cls.movie_dpi, help="movie rendering DPI")
 
         if want("external"):
             add_arg("--external-field-mass", type=float, default=cls.external_field_mass, help="external field mass")
@@ -240,6 +291,11 @@ class Config:
     def validate(self) -> None:
         if self.history_len and self.history_len > 0 and not self.feature_type:
             raise ValueError("history_len > 0 requires feature_type")
+        if self.normalize_inputs and self.norm_mode not in {"auto", "manual"}:
+            raise ValueError("norm_mode must be 'auto' or 'manual'")
+        if self.normalize_inputs and self.norm_mode == "manual":
+            if self.norm_L0 is None or self.norm_V0 is None:
+                raise ValueError("manual normalization requires norm_L0 and norm_V0")
         if self.num_particles is not None and self.num_particles < 2:
             raise ValueError("num_particles must be >= 2")
         if self.dim is not None and self.dim < 1:

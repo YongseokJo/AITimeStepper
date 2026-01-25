@@ -39,11 +39,17 @@ class HistoryBuffer:
     available state to fill the sequence (left-padding).
     """
 
-    def __init__(self, history_len: int = 3, feature_type: FeatureType = "delta_mag"):
+    def __init__(
+        self,
+        history_len: int = 3,
+        feature_type: FeatureType = "delta_mag",
+        norm_scales: dict | None = None,
+    ):
         assert history_len >= 0
         self.history_len: int = int(history_len)
         self.feature_type: FeatureType = feature_type
         self._buf: Deque[_HistoryState] = deque(maxlen=self.history_len)
+        self.norm_scales = norm_scales
 
     def reset(self):
         self._buf.clear()
@@ -136,7 +142,11 @@ class HistoryBuffer:
 
     def clone(self) -> "HistoryBuffer":
         """Create a shallow copy with detached stored states."""
-        hb = HistoryBuffer(history_len=self.history_len, feature_type=self.feature_type)
+        hb = HistoryBuffer(
+            history_len=self.history_len,
+            feature_type=self.feature_type,
+            norm_scales=self.norm_scales,
+        )
         for state in list(self._buf):
             hb._buf.append(
                 _HistoryState(
@@ -152,11 +162,21 @@ class HistoryBuffer:
     @staticmethod
     def _compute_acceleration(position: torch.Tensor, mass: torch.Tensor, softening: float, G: float = 1.0) -> torch.Tensor:
         m = HistoryBuffer._normalize_mass(mass, position)
-        return nbody_compute_acceleration(position, m, softening=softening, G=G)
+        soft = float(softening) if softening is not None else 0.0
+        if soft <= 0.0:
+            soft = 1e-6
+        return nbody_compute_acceleration(position, m, softening=soft, G=G)
 
     @staticmethod
-    def _basic_features(position: torch.Tensor, velocity: torch.Tensor, mass: torch.Tensor,
-                        softening: float, which_accel: int = 0, G: float = 1.0) -> torch.Tensor:
+    def _basic_features(
+        position: torch.Tensor,
+        velocity: torch.Tensor,
+        mass: torch.Tensor,
+        softening: float,
+        which_accel: int = 0,
+        G: float = 1.0,
+        norm_scales: dict | None = None,
+    ) -> torch.Tensor:
         _ = which_accel
         return nbody_system_features(
             position=position,
@@ -165,11 +185,19 @@ class HistoryBuffer:
             softening=softening,
             G=G,
             mode="basic",
+            norm_scales=norm_scales,
         )
 
     @staticmethod
-    def _rich_features(position: torch.Tensor, velocity: torch.Tensor, mass: torch.Tensor,
-                       softening: float, which_accel: int = 0, G: float = 1.0) -> torch.Tensor:
+    def _rich_features(
+        position: torch.Tensor,
+        velocity: torch.Tensor,
+        mass: torch.Tensor,
+        softening: float,
+        which_accel: int = 0,
+        G: float = 1.0,
+        norm_scales: dict | None = None,
+    ) -> torch.Tensor:
         _ = which_accel
         return nbody_system_features(
             position=position,
@@ -178,6 +206,7 @@ class HistoryBuffer:
             softening=softening,
             G=G,
             mode="rich",
+            norm_scales=norm_scales,
         )
 
     @staticmethod
@@ -188,6 +217,7 @@ class HistoryBuffer:
         dt_seq: torch.Tensor,
         feature_type: FeatureType,
         softening: float,
+        norm_scales: dict | None = None,
     ) -> torch.Tensor:
         if feature_type in ("basic", "rich"):
             mode = "basic" if feature_type == "basic" else "rich"
@@ -198,6 +228,7 @@ class HistoryBuffer:
                 softening=softening,
                 G=1.0,
                 mode=mode,
+                norm_scales=norm_scales,
             )
             return torch.cat(torch.unbind(feats, dim=0), dim=-1)
         if feature_type == "delta_mag":
@@ -209,9 +240,18 @@ class HistoryBuffer:
             dvel = velocity_seq[1:] - velocity_seq[:-1]
             dacc = acc_seq[1:] - acc_seq[:-1]
 
-            dpos_mag = torch.linalg.norm(dpos, dim=-1)
-            dvel_mag = torch.linalg.norm(dvel, dim=-1)
-            dacc_mag = torch.linalg.norm(dacc, dim=-1)
+            L0 = float(norm_scales.get("L0", 1.0)) if norm_scales else 1.0
+            V0 = float(norm_scales.get("V0", 1.0)) if norm_scales else 1.0
+            A0 = float(norm_scales.get("A0", 1.0)) if norm_scales else 1.0
+            T0 = float(norm_scales.get("T0", 1.0)) if norm_scales else 1.0
+            L0 = L0 if L0 > 0 else 1.0
+            V0 = V0 if V0 > 0 else 1.0
+            A0 = A0 if A0 > 0 else 1.0
+            T0 = T0 if T0 > 0 else 1.0
+
+            dpos_mag = torch.linalg.norm(dpos, dim=-1) / L0
+            dvel_mag = torch.linalg.norm(dvel, dim=-1) / V0
+            dacc_mag = torch.linalg.norm(dacc, dim=-1) / A0
 
             def _stats(x):
                 mean = x.mean(dim=-1, keepdim=True)
@@ -223,7 +263,7 @@ class HistoryBuffer:
             dvel_stats = _stats(dvel_mag)
             dacc_stats = _stats(dacc_mag)
 
-            dt_feat = dt_seq[1:].unsqueeze(-1)
+            dt_feat = dt_seq[1:].unsqueeze(-1) / T0
             delta_feats = torch.cat([*dpos_stats, *dvel_stats, *dacc_stats, dt_feat], dim=-1)
             return torch.cat(torch.unbind(delta_feats, dim=0), dim=-1)
         raise ValueError(f"Unsupported feature_type={feature_type!r}")
@@ -262,7 +302,7 @@ class HistoryBuffer:
         return _HistoryState(
             position=torch.zeros_like(reference.position),
             velocity=torch.zeros_like(reference.velocity),
-            mass=torch.zeros_like(reference.mass),
+            mass=reference.mass.detach().clone(),
             dt=torch.zeros_like(reference.dt),
             softening=reference.softening,
         )
@@ -305,6 +345,7 @@ class HistoryBuffer:
             dt_seq,
             self.feature_type,
             softening,
+            self.norm_scales,
         )
 
         # squeeze batch if B==1
@@ -370,6 +411,7 @@ class HistoryBuffer:
             dt_seq,
             self.feature_type,
             softening,
+            self.norm_scales,
         )
         return feats
 
@@ -383,9 +425,12 @@ class HistoryBuffer:
 
         history_len = histories[0].history_len
         feature_type = histories[0].feature_type
+        norm_scales = histories[0].norm_scales
         for h in histories[1:]:
             if h.history_len != history_len or h.feature_type != feature_type:
                 raise ValueError("All histories must share history_len and feature_type")
+            if h.norm_scales != norm_scales:
+                raise ValueError("All histories must share norm_scales")
 
         pos = batch_state.position
         vel = batch_state.velocity
@@ -460,6 +505,7 @@ class HistoryBuffer:
             dt_seq,
             feature_type,
             softening if softening is not None else 0.0,
+            norm_scales,
         )
         return feats
 

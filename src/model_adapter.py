@@ -7,6 +7,7 @@ import torch
 
 from .config import Config
 from .history_buffer import HistoryBuffer
+from .normalization import apply_norm_scales_to_config, derive_norm_scales_from_config
 from .particle import ParticleTorch
 
 
@@ -16,6 +17,7 @@ class ModelAdapter:
     device: torch.device
     dtype: torch.dtype
     history_buffer: Optional[HistoryBuffer] = None
+    norm_scales: Optional[dict] = None
 
     def __init__(self, config: Config, *, device: Optional[torch.device] = None, dtype: Optional[torch.dtype] = None):
         self.config = config
@@ -23,8 +25,15 @@ class ModelAdapter:
         self.dtype = dtype or config.resolve_dtype()
         self.config.apply_torch_settings(self.device)
         self.history_buffer = None
+        self.norm_scales = None
         if config.history_len and config.history_len > 0:
-            self.history_buffer = HistoryBuffer(history_len=config.history_len, feature_type=config.feature_type)
+            self.history_buffer = HistoryBuffer(
+                history_len=config.history_len,
+                feature_type=config.feature_type,
+                norm_scales=None,
+            )
+        if config.normalize_inputs and config.norm_mode == "manual":
+            self.set_norm_scales(derive_norm_scales_from_config(config))
 
     @property
     def history_enabled(self) -> bool:
@@ -51,7 +60,12 @@ class ModelAdapter:
             else:
                 raise RuntimeError("History-enabled adapter requires a HistoryBuffer")
         else:
-            feats = state.system_features(mode=self.feature_mode())
+            feats = state.system_features(mode=self.feature_mode(), norm_scales=self.norm_scales)
+        if self.config.debug and not torch.isfinite(feats).all():
+            self._debug_tensor("features", feats)
+            self._debug_tensor("position", state.position)
+            self._debug_tensor("velocity", state.velocity)
+            self._debug_tensor("mass", state.mass)
         return feats
 
     def input_dim_from_state(
@@ -93,6 +107,35 @@ class ModelAdapter:
         if dt_tensor.numel() == 1:
             return float(dt_tensor.squeeze(0).item())
         return dt_tensor
+
+    def set_norm_scales(self, norm_scales: Optional[dict]) -> None:
+        self.norm_scales = norm_scales
+        apply_norm_scales_to_config(self.config, norm_scales)
+        if self.history_buffer is not None:
+            self.history_buffer.norm_scales = norm_scales
+
+    def _debug_tensor(self, name: str, tensor: torch.Tensor) -> None:
+        if not torch.is_tensor(tensor):
+            print(f"debug {name}: non-tensor {type(tensor)}")
+            return
+        t = tensor.detach()
+        finite_mask = torch.isfinite(t)
+        finite = bool(finite_mask.all().item())
+        numel = t.numel()
+        finite_count = int(finite_mask.sum().item())
+        if finite_count > 0:
+            finite_vals = t[finite_mask]
+            tmin = finite_vals.min().item()
+            tmax = finite_vals.max().item()
+            tmean = finite_vals.mean().item()
+        else:
+            tmin = float("nan")
+            tmax = float("nan")
+            tmean = float("nan")
+        print(
+            f"debug {name}: finite={finite} count={finite_count}/{numel} "
+            f"min={tmin:.4e} max={tmax:.4e} mean={tmean:.4e}"
+        )
 
     def update_history(
         self,

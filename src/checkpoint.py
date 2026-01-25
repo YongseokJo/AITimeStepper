@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, Optional
+import inspect
 
 import torch
 
@@ -73,6 +74,8 @@ def save_checkpoint(
 
 
 def load_checkpoint(path: str | Path, map_location: Optional[str | torch.device] = None) -> Dict[str, Any]:
+    if "weights_only" in inspect.signature(torch.load).parameters:
+        return torch.load(path, map_location=map_location, weights_only=False)
     return torch.load(path, map_location=map_location)
 
 

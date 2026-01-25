@@ -11,8 +11,8 @@
 #SBATCH --constraint="scratch"
 #SBATCH --mail-user=g.kerex@gmail.com
 #SBATCH --mail-type="BEGIN,END"
-#SBATCH -e slurm-%j.err
-#SBATCH -o slurm-%j.out
+#SBATCH -e logs/slurm-%j.err
+#SBATCH -o logs/slurm-%j.out
 ###SBATCH --array=0-2 
 
 ### GPU options ###
@@ -42,12 +42,13 @@ which python
 #echo "Running array task $SLURM_ARRAY_TASK_ID with dt=$dt"
 
 echo "job is starting on `hostname`"
-#srun python3 run/runner.py simulate
-
-#python3 run/runner.py train
-
-#python ML_history_wandb.py --epochs 2000 --n-steps 20 --history-len 20 --feature-type delta_mag --save-name test_history_logs --wandb-project AITimeStepper --wandb-name history_ml_mag_20
 
 
-
-python ML_history_multi_wandb.py --epochs 2000 --num-orbits 8 --debug --n-steps 5 --history-len 5 --feature-type delta_mag --save-name test_history_multi_logs --wandb-project AITimeStepper --wandb-name history_ml_multi_5
+python runner.py train \
+	--epochs 200 \
+	--n-steps 5 \
+	--history-len 5 \
+	--feature-type delta_mag \
+	--num-particles 4 \
+	--save-name nbody_history_run \
+	--wandb --wandb-project AITimeStepper --wandb-name my_run

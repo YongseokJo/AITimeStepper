@@ -12,7 +12,7 @@ This is a Python + PyTorch project. Create/activate an environment that has at l
 - `torch`
 - `numpy`
 - `matplotlib`
-- `wandb` (only required for the `*_wandb.py` runners)
+- `wandb` (only required if you pass `--wandb`)
 
 If you already have an environment, you can quickly sanity-check imports with:
 
@@ -36,27 +36,41 @@ python -c "import torch, numpy, matplotlib, wandb"
 python run/runner.py simulate --num-particles 3 --steps 200
 ```
 
-### 2) Train the history-aware time-stepper (W&B)
+### 2) Train + simulate from a TOML config
 
 ```bash
-python run/ML_history_wandb.py --epochs 1000 --n-steps 10 --history-len 3 --feature-type basic
-```
-
-Useful flags:
-
-- `--device auto|cpu|cuda`
-- `--E_lower`, `--E_upper` (energy drift band)
-- `--L_lower`, `--L_upper` (angular momentum drift band)
-
-If training appears to stall, run with debug timing:
-
-```bash
-python run/ML_history_wandb.py --debug --debug-every 1 --debug-replay-every 10
+python run/runner.py both --config configs/example.toml
 ```
 
 ### 3) Run Optuna sweeps
 
 See `optuna/main.py` and `run/run_optuna.sh` for the current sweep entrypoints.
+
+## TOML workflow
+
+Use `--config` to pass a TOML file with shared defaults plus `[train]` and `[simulate]` sections.
+CLI flags can still override values from TOML.
+
+```toml
+# shared defaults
+save_name = "nbody_run"
+num_particles = 4
+history_len = 5
+feature_type = "delta_mag"
+
+[train]
+epochs = 200
+n_steps = 5
+energy_threshold = 2e-4
+steps_per_epoch = 2
+wandb = true
+
+[simulate]
+steps = 500
+# model_path optional: defaults to latest checkpoint from training
+# movie = true
+# movie_max_frames = 1000
+```
 
 ## Unified runner (single entrypoint)
 
@@ -73,6 +87,12 @@ python run/runner.py train --epochs 200 --n-steps 5 --num-particles 4 --save-nam
 ```bash
 python run/runner.py train --epochs 200 --n-steps 5 --history-len 5 --feature-type delta_mag --num-particles 4 --save-name nbody_history_run
 ```
+
+### Two-phase training notes
+
+- Training uses an accept/reject loop that enforces `--energy-threshold` on every step.
+- Use `--steps-per-epoch` to control how many validated steps are collected per epoch.
+- `--duration` and `--num-orbits > 1` are accepted but currently warn and fall back to single-orbit epoch-based training.
 
 ### Simulate (analytic)
 
@@ -96,7 +116,6 @@ python run/runner.py simulate --integrator-mode history --model-path data/<save>
 
 ```bash
 python run/runner.py simulate --num-particles 4 --duration 0.05
-python run/runner.py train --epochs 1000 --duration 60
 ```
 
 ### External field
@@ -104,6 +123,15 @@ python run/runner.py train --epochs 1000 --duration 60
 ```bash
 python run/runner.py simulate --external-field-mass 5.0 --external-field-position 10 0 0 --num-particles 4 --steps 200
 ```
+
+### Movie generation (two-body 2D)
+
+```bash
+python run/runner.py simulate --num-particles 2 --dim 2 --steps 500 --movie
+```
+
+Options: `--movie-dir`, `--movie-max-frames`, `--movie-fps`, `--movie-dpi`.
+Requires matplotlib + ffmpeg in PATH; only supports 2-body 2D runs. Training with `--movie` writes the cumulative trajectory (including warmup steps) to `nbody_movie_<save>_train.mp4`.
 
 ## Analytic tidal potential (external field)
 
@@ -149,17 +177,17 @@ The NumPy N-body simulator supports an optional `external_acceleration(positions
 from simulators.nbody_simulator import evolve_particles
 
 def ext_acc(pos, t):
-	# pos: (N, D) numpy array
-	# return: (N, D) numpy array
-	...
+    # pos: (N, D) numpy array
+    # return: (N, D) numpy array
+    ...
 
 evolve_particles(particles, external_acceleration=ext_acc)
 ```
 
 ### Quick sanity run
 
-There’s a tiny demo script:
+Use the unified runner:
 
 ```bash
-python run/tidal_sanity.py
+python run/runner.py simulate --external-field-mass 5.0 --external-field-position 10 0 0 --num-particles 4 --steps 200
 ```

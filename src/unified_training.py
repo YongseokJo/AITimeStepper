@@ -35,6 +35,11 @@ def train_epoch_two_phase(
     config: Config,
     adapter: ModelAdapter,
     history_buffer: Optional[HistoryBuffer] = None,
+    wandb_run: Optional[Any] = None,
+    retrain_log_every: int = 100,
+    part2_log_every: int = 100,
+    return_trajectory: bool = False,
+    include_warmup: bool = False,
 ) -> Dict[str, Any]:
     """
     Execute one complete epoch: Part 1 (collection) + Part 2 (generalization).
@@ -70,6 +75,7 @@ def train_epoch_two_phase(
             'converged': bool - True if Part 2 converged before max iterations
             'part2_iterations': int - Number of iterations in Part 2
             'epoch_time': float - Wall clock time for epoch (seconds)
+            'trajectory': list of (ParticleTorch, dt) tuples if return_trajectory is True
 
     Example:
         >>> epoch_result = train_epoch_two_phase(
@@ -81,13 +87,17 @@ def train_epoch_two_phase(
     epoch_start = time.perf_counter()
 
     # Part 1: Collect trajectory (TRAIN-04, HIST-02)
-    trajectory, traj_metrics = collect_trajectory(
+    trajectory, traj_metrics, final_particle = collect_trajectory(
         model=model,
         particle=particle,
         optimizer=optimizer,
         config=config,
         adapter=adapter,
         history_buffer=history_buffer,
+        wandb_run=wandb_run,
+        retrain_log_every=retrain_log_every,
+        include_warmup=include_warmup,
+        return_final_particle=True,
     )
 
     # Log warning if trajectory is empty (edge case)
@@ -106,17 +116,23 @@ def train_epoch_two_phase(
         config=config,
         adapter=adapter,
         history_buffer=history_buffer,
+        wandb_run=wandb_run,
+        log_every=part2_log_every,
     )
 
     epoch_time = time.perf_counter() - epoch_start
 
-    return {
+    result = {
         'trajectory_metrics': traj_metrics,
         'generalization_metrics': gen_metrics,
         'converged': converged,
         'part2_iterations': part2_iters,
         'epoch_time': epoch_time,
+        'final_particle': final_particle,
     }
+    if return_trajectory:
+        result['trajectory'] = trajectory
+    return result
 
 
 def run_two_phase_training(
@@ -129,6 +145,8 @@ def run_two_phase_training(
     save_dir: Optional[Path] = None,
     wandb_run: Optional[Any] = None,
     checkpoint_interval: int = 10,
+    checkpoint_extra: Optional[Dict[str, Any]] = None,
+    return_final_trajectory: bool = False,
 ) -> Dict[str, Any]:
     """
     Run N epochs of two-phase training with checkpointing and logging.
@@ -159,6 +177,7 @@ def run_two_phase_training(
         save_dir: Directory for checkpoint saves (None = no saves)
         wandb_run: W&B run object from wandb.init() (None = no logging)
         checkpoint_interval: Save checkpoint every N epochs (default: 10)
+        checkpoint_extra: Extra payload to save in each checkpoint
 
     Returns:
         training_result: dict with:
@@ -167,6 +186,7 @@ def run_two_phase_training(
             'final_metrics': dict - Metrics from last epoch
             'convergence_rate': float - Fraction of epochs where Part 2 converged
             'results': List[dict] - Per-epoch results (if config.debug)
+            'final_trajectory': cumulative List[(ParticleTorch, dt)] when return_final_trajectory is True
 
     Example:
         >>> result = run_two_phase_training(
@@ -198,9 +218,13 @@ def run_two_phase_training(
 
     # Track last epoch result for final return
     epoch_result: Dict[str, Any] = {}
+    final_trajectory: Optional[List[Tuple[ParticleTorch, float]]] = [] if return_final_trajectory else None
+
+    part2_log_every = int(config.extra.get("part2_log_every", 100)) if isinstance(config.extra, dict) else 100
 
     for epoch in range(config.epochs):
         # Execute one epoch (Part 1 + Part 2)
+        want_trajectory = return_final_trajectory
         epoch_result = train_epoch_two_phase(
             model=model,
             particle=current_particle,
@@ -208,7 +232,16 @@ def run_two_phase_training(
             config=config,
             adapter=adapter,
             history_buffer=history_buffer,
+            wandb_run=wandb_run,
+            part2_log_every=part2_log_every,
+            return_trajectory=want_trajectory,
+            include_warmup=True,
         )
+        current_particle = epoch_result['final_particle']
+        if want_trajectory:
+            epoch_trajectory = epoch_result.pop('trajectory', None)
+            if epoch_trajectory:
+                final_trajectory.extend(epoch_trajectory)
 
         # Track convergence
         if epoch_result['converged']:
@@ -235,8 +268,14 @@ def run_two_phase_training(
                 'part1/mean_retrain_iterations': mean_retrain,
                 'part1/max_retrain_iterations': traj_m.get('max_retrain_iterations', 0),
                 'part1/mean_energy_error': traj_m.get('mean_energy_error', 0.0),
+                'part1/min_energy_error': traj_m.get('min_energy_error', 0.0),
+                'part1/max_energy_error': traj_m.get('max_energy_error', 0.0),
                 'part1/warmup_discarded': traj_m.get('warmup_discarded', 0),
                 'part1/acceptance_rate': acceptance_rate,
+                'part1/mean_retrain_loss': traj_m.get('mean_retrain_loss', 0.0),
+                'part1/max_retrain_loss': traj_m.get('max_retrain_loss', 0.0),
+                'part1/mean_retrain_rel_dE': traj_m.get('mean_retrain_rel_dE', 0.0),
+                'part1/max_retrain_rel_dE': traj_m.get('max_retrain_rel_dE', 0.0),
                 # Part 2 metrics
                 'part2/converged': int(epoch_result['converged']),
                 'part2/iterations': epoch_result['part2_iterations'],
@@ -258,6 +297,7 @@ def run_two_phase_training(
                     epoch=epoch,
                     logs=epoch_result,
                     config=config,
+                    extra=checkpoint_extra,
                 )
                 if config.debug:
                     print(f"Checkpoint saved: {save_path}")
@@ -272,10 +312,14 @@ def run_two_phase_training(
     total_time = time.perf_counter() - training_start
     convergence_rate = converged_count / config.epochs if config.epochs > 0 else 0.0
 
-    return {
+    result = {
         'epochs_completed': config.epochs,
         'total_time': total_time,
         'final_metrics': epoch_result if config.epochs > 0 else {},
         'convergence_rate': convergence_rate,
         'results': all_results if config.debug else [],
+        'final_particle': current_particle,
     }
+    if return_final_trajectory:
+        result['final_trajectory'] = final_trajectory or []
+    return result

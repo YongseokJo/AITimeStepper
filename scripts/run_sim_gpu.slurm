@@ -8,8 +8,8 @@
 #SBATCH --job-name=sim_gpu
 #SBATCH --time=02:00:00      # hh:mm:ss for the job
 #SBATCH --constraint="scratch"
-#SBATCH -e slurm-%j.err
-#SBATCH -o slurm-%j.out
+#SBATCH -e logs/slurm-%j.err
+#SBATCH -o logs/slurm-%j.out
 ###SBATCH --array=0-2 
 
 ### GPU options ###

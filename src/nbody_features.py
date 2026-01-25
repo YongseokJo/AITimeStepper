@@ -111,6 +111,7 @@ def system_features(
     G: float = 1.0,
     mode: str = "basic",
     eps: float = 1e-12,
+    norm_scales: dict | None = None,
 ) -> torch.Tensor:
     """
     Build fixed-size, permutation-invariant features for an N-body system.
@@ -157,19 +158,26 @@ def system_features(
     d_val = torch.full(base_shape, float(D), device=pos.device, dtype=pos.dtype)
     soft_val = torch.full(base_shape, float(softening), device=pos.device, dtype=pos.dtype)
 
+    L0 = float(norm_scales.get("L0", 1.0)) if norm_scales else 1.0
+    V0 = float(norm_scales.get("V0", 1.0)) if norm_scales else 1.0
+    A0 = float(norm_scales.get("A0", 1.0)) if norm_scales else 1.0
+    L0 = L0 if L0 > 0 else 1.0
+    V0 = V0 if V0 > 0 else 1.0
+    A0 = A0 if A0 > 0 else 1.0
+
     if mode == "basic":
         feats = [
             n_val,
             d_val,
             total_mass,
-            r_mean,
-            r_max,
-            v_mean,
-            v_max,
-            a_mean,
-            a_max,
-            pair_min,
-            pair_mean,
+            r_mean / L0,
+            r_max / L0,
+            v_mean / V0,
+            v_max / V0,
+            a_mean / A0,
+            a_max / A0,
+            pair_min / L0,
+            pair_mean / L0,
         ]
     elif mode == "rich":
         feats = [
@@ -180,22 +188,22 @@ def system_features(
             m_min,
             m_max,
             m_rms,
-            r_mean,
-            r_min,
-            r_max,
-            r_rms,
-            v_mean,
-            v_min,
-            v_max,
-            v_rms,
-            a_mean,
-            a_min,
-            a_max,
-            a_rms,
-            pair_min,
-            pair_mean,
-            pair_max,
-            soft_val,
+            r_mean / L0,
+            r_min / L0,
+            r_max / L0,
+            r_rms / L0,
+            v_mean / V0,
+            v_min / V0,
+            v_max / V0,
+            v_rms / V0,
+            a_mean / A0,
+            a_min / A0,
+            a_max / A0,
+            a_rms / A0,
+            pair_min / L0,
+            pair_mean / L0,
+            pair_max / L0,
+            soft_val / L0,
         ]
     else:
         raise ValueError(f"Unsupported mode={mode!r}. Use 'basic' or 'rich'.")

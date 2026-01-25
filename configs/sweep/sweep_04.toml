@@ -1,0 +1,15 @@
+save_name = "sweep_04"
+num_particles = 4
+history_len = 3
+feature_type = "basic"
+
+[train]
+epochs = 200
+n_steps = 5
+lr = 1e-4
+steps_per_epoch = 1
+energy_threshold = 1e-4
+wandb = true
+
+[simulate]
+steps = 500

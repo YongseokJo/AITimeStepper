@@ -1,0 +1,15 @@
+save_name = "sweep_02"
+num_particles = 4
+history_len = 5
+feature_type = "delta_mag"
+
+[train]
+epochs = 200
+n_steps = 5
+lr = 5e-4
+steps_per_epoch = 1
+energy_threshold = 2e-4
+wandb = true
+
+[simulate]
+steps = 500

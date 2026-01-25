@@ -19,7 +19,7 @@ Key properties:
 """
 
 import random
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 
@@ -35,9 +35,9 @@ from .trajectory_collection import (
 
 
 def sample_minibatch(
-    trajectory: List[Tuple[ParticleTorch, float]],
+    trajectory: List[Tuple[ParticleTorch, float, Optional[torch.Tensor]]],
     batch_size: int,
-) -> List[Tuple[ParticleTorch, float]]:
+) -> List[Tuple[ParticleTorch, float, Optional[torch.Tensor]]]:
     """
     Sample random minibatch from trajectory.
 
@@ -46,14 +46,14 @@ def sample_minibatch(
     samples (capped at trajectory length).
 
     Args:
-        trajectory: List of (particle, dt) tuples from collect_trajectory()
+        trajectory: List of (particle, dt, mask) tuples from collect_trajectory()
         batch_size: Number of samples to draw (capped at trajectory length)
 
     Returns:
-        List of (particle, dt) tuples
+        List of (particle, dt, mask) tuples
 
     Example:
-        >>> trajectory = [(p1, 0.01), (p2, 0.02), (p3, 0.015)]
+        >>> trajectory = [(p1, 0.01, None), (p2, 0.02, None)]
         >>> batch = sample_minibatch(trajectory, batch_size=2)
         >>> len(batch)
         2
@@ -64,7 +64,7 @@ def sample_minibatch(
 
 def evaluate_minibatch(
     model: torch.nn.Module,
-    minibatch: List[Tuple[ParticleTorch, float]],
+    minibatch: List[Tuple[ParticleTorch, float, Optional[torch.Tensor]]],
     config: Config,
     adapter: ModelAdapter,
     history_buffer: Optional[HistoryBuffer] = None,
@@ -82,7 +82,7 @@ def evaluate_minibatch(
 
     Args:
         model: Neural network for dt prediction
-        minibatch: List of (particle, dt) tuples to evaluate
+        minibatch: List of (particle, dt, mask) tuples to evaluate
         config: Config with energy_threshold
         adapter: ModelAdapter for feature construction
         history_buffer: Optional history buffer for temporal features
@@ -107,14 +107,20 @@ def evaluate_minibatch(
     pass_count = 0
     fail_count = 0
 
-    for particle, _stored_dt in minibatch:
+    for item in minibatch:
+        if len(item) == 3:
+            particle, _stored_dt, active_mask = item
+        else:
+            particle, _stored_dt = item
+            active_mask = None
+
         # Predict dt, integrate one step (creates clone_detached internally)
         _advanced, _dt, E0, E1 = attempt_single_step(
-            model, particle, config, adapter, history_buffer
+            model, particle, config, adapter, history_buffer, active_mask=active_mask
         )
 
         # Check energy threshold
-        passed, rel_dE = check_energy_threshold(E0, E1, config.energy_threshold)
+        passed, rel_dE = check_energy_threshold(E0, E1, config.energy_threshold, active_mask=active_mask)
 
         # Track relative energy error (convert to float)
         rel_dE_value = rel_dE.item() if rel_dE.numel() == 1 else rel_dE.mean().item()
@@ -125,7 +131,7 @@ def evaluate_minibatch(
         else:
             fail_count += 1
             # Compute loss for failed sample
-            loss = compute_single_step_loss(E0, E1, config)
+            loss = compute_single_step_loss(E0, E1, config, active_mask=active_mask)
             losses.append(loss)
 
     # Compute metrics
@@ -142,11 +148,13 @@ def evaluate_minibatch(
 
 def generalize_on_trajectory(
     model: torch.nn.Module,
-    trajectory: List[Tuple[ParticleTorch, float]],
+    trajectory: List[Tuple[ParticleTorch, float, Optional[torch.Tensor]]],
     optimizer: torch.optim.Optimizer,
     config: Config,
     adapter: ModelAdapter,
     history_buffer: Optional[HistoryBuffer] = None,
+    wandb_run: Optional[Any] = None,
+    log_every: int = 100,
 ) -> Tuple[bool, int, Dict[str, Any]]:
     """
     Train on random minibatches from trajectory until convergence.
@@ -164,7 +172,7 @@ def generalize_on_trajectory(
 
     Args:
         model: Neural network for dt prediction
-        trajectory: List of (particle, dt) tuples from collect_trajectory()
+        trajectory: List of (particle, dt, mask) tuples from collect_trajectory()
         optimizer: PyTorch optimizer for model
         config: Config with replay_steps, replay_batch_size, min_replay_size
         adapter: ModelAdapter for feature construction
@@ -186,8 +194,23 @@ def generalize_on_trajectory(
         >>> else:
         ...     print(f"Did not converge after {config.replay_steps} iterations")
     """
+    wandb = None
+    if wandb_run is not None:
+        try:
+            import wandb as wandb_lib
+            wandb = wandb_lib
+        except ImportError:
+            wandb_run = None
+
+    if config.debug:
+        print(f"part2: trajectory_len={len(trajectory)} min_replay_size={config.min_replay_size}")
+
     # Edge case: empty trajectory
     if not trajectory:
+        if wandb_run is not None and wandb is not None:
+            wandb.log({"part2/skip_reason": 1, "part2/trajectory_len": 0})
+        if config.debug:
+            print("part2: skipped (empty trajectory)")
         return True, 0, {
             'mean_rel_dE': 0.0,
             'max_rel_dE': 0.0,
@@ -196,6 +219,10 @@ def generalize_on_trajectory(
 
     # Edge case: trajectory below min_replay_size
     if len(trajectory) < config.min_replay_size:
+        if wandb_run is not None and wandb is not None:
+            wandb.log({"part2/skip_reason": 2, "part2/trajectory_len": len(trajectory)})
+        if config.debug:
+            print("part2: skipped (trajectory below min_replay_size)")
         return True, 0, {
             'mean_rel_dE': 0.0,
             'max_rel_dE': 0.0,
@@ -220,6 +247,16 @@ def generalize_on_trajectory(
             model, minibatch, config, adapter, history_buffer
         )
 
+        loss_mean = 0.0
+        loss_max = 0.0
+        if losses:
+            loss_stack = torch.stack(losses)
+            loss_mean = loss_stack.mean().item()
+            loss_max = loss_stack.max().item()
+
+        grad_norm = 0.0
+        lr = optimizer.param_groups[0].get("lr", 0.0) if optimizer.param_groups else 0.0
+
         # Update final metrics
         final_metrics['mean_rel_dE'] = batch_metrics['mean_rel_dE']
         final_metrics['max_rel_dE'] = batch_metrics['max_rel_dE']
@@ -228,6 +265,33 @@ def generalize_on_trajectory(
 
         # 3. Check convergence
         if all_pass:
+            if (
+                wandb_run is not None
+                and wandb is not None
+                and log_every > 0
+                and iteration % log_every == 0
+            ):
+                wandb.log(
+                    {
+                        "part2/replay/iteration": iteration,
+                        "part2/replay/pass_count": batch_metrics["pass_count"],
+                        "part2/replay/fail_count": batch_metrics["fail_count"],
+                        "part2/replay/mean_rel_dE": batch_metrics["mean_rel_dE"],
+                        "part2/replay/max_rel_dE": batch_metrics["max_rel_dE"],
+                        "part2/replay/loss_mean": loss_mean,
+                        "part2/replay/loss_max": loss_max,
+                        "part2/replay/grad_norm": grad_norm,
+                        "part2/replay/lr": lr,
+                        "part2/replay/trajectory_len": len(trajectory),
+                    }
+                )
+            if config.debug and iteration % config.debug_replay_every == 0:
+                print(
+                    "part2/replay "
+                    f"iter={iteration} pass={batch_metrics['pass_count']} fail={batch_metrics['fail_count']} "
+                    f"mean_rel_dE={batch_metrics['mean_rel_dE']:.4e} max_rel_dE={batch_metrics['max_rel_dE']:.4e} "
+                    f"loss_mean={loss_mean:.4e} lr={lr:.4e}"
+                )
             return True, iteration + 1, final_metrics
 
         # 4. Aggregate losses and backprop
@@ -235,7 +299,40 @@ def generalize_on_trajectory(
             total_loss = torch.stack(losses).mean()
             optimizer.zero_grad()
             total_loss.backward()
+            grad_norm_sq = 0.0
+            for param in model.parameters():
+                if param.grad is not None:
+                    grad_norm_sq += param.grad.detach().pow(2).sum().item()
+            grad_norm = grad_norm_sq ** 0.5
             optimizer.step()
+
+            if (
+                wandb_run is not None
+                and wandb is not None
+                and log_every > 0
+                and iteration % log_every == 0
+            ):
+                wandb.log(
+                    {
+                        "part2/replay/iteration": iteration,
+                        "part2/replay/pass_count": batch_metrics["pass_count"],
+                        "part2/replay/fail_count": batch_metrics["fail_count"],
+                        "part2/replay/mean_rel_dE": batch_metrics["mean_rel_dE"],
+                        "part2/replay/max_rel_dE": batch_metrics["max_rel_dE"],
+                        "part2/replay/loss_mean": loss_mean,
+                        "part2/replay/loss_max": loss_max,
+                        "part2/replay/grad_norm": grad_norm,
+                        "part2/replay/lr": lr,
+                        "part2/replay/trajectory_len": len(trajectory),
+                    }
+                )
+            if config.debug and iteration % config.debug_replay_every == 0:
+                print(
+                    "part2/replay "
+                    f"iter={iteration} pass={batch_metrics['pass_count']} fail={batch_metrics['fail_count']} "
+                    f"mean_rel_dE={batch_metrics['mean_rel_dE']:.4e} max_rel_dE={batch_metrics['max_rel_dE']:.4e} "
+                    f"loss_mean={loss_mean:.4e} grad_norm={grad_norm:.4e} lr={lr:.4e}"
+                )
 
     # Did not converge within max iterations
     return False, config.replay_steps, final_metrics

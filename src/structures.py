@@ -29,17 +29,37 @@ class SimpleNN(nn.Module):
 
 
 
-class FullyConnectedNN(nn.Module):
-    def __init__(self, input_dim, output_dim, hidden_dims=[64, 64], activation='relu', dropout=0.0, output_positive=True):
-        """
-        Initializes the fully connected network.
+class FourierFeatureEmbedding(nn.Module):
+    def __init__(self, input_dim: int, embedding_dim: int, scale: float):
+        super().__init__()
+        self.input_dim = input_dim
+        self.embedding_dim = embedding_dim
+        self.scale = scale
+        # Random Gaussian matrix B: (embedding_dim // 2, input_dim)
+        # We divide by 2 because we will concat sin and cos, doubling the size.
+        self.B = nn.Parameter(torch.randn(embedding_dim // 2, input_dim) * scale, requires_grad=False)
 
-        Parameters:
-            input_dim (int): Number of input features.
-            output_dim (int): Number of output features.
-            hidden_dims (list of int): Sizes of hidden layers. Default is [64, 64].
-            activation (str): Activation function to use. Options: 'relu', 'tanh', or 'sigmoid'. Default is 'relu'.
-            dropout (float): Dropout probability (0.0 means no dropout). Default is 0.0.
+    def forward(self, x):
+        # x: (..., input_dim)
+        # proj: (..., embedding_dim // 2)
+        proj = 2 * torch.pi * x @ self.B.T
+        return torch.cat([torch.sin(proj), torch.cos(proj)], dim=-1)
+
+
+class FullyConnectedNN(nn.Module):
+    def __init__(
+        self,
+        input_dim,
+        output_dim,
+        hidden_dims=[64, 64],
+        activation='relu',
+        dropout=0.0,
+        output_positive=True,
+        fourier_scale=-1.0,
+        fourier_dim=256,
+    ):
+        """
+        Initializes the fully connected network with optional Fourier Features.
         """
         super(FullyConnectedNN, self).__init__()
 
@@ -55,7 +75,14 @@ class FullyConnectedNN(nn.Module):
         act_fn = activations[activation.lower()]
 
         layers = []
-        current_dim = input_dim
+        
+        # Fourier Embedding Layer
+        if fourier_scale > 0:
+            self.embedding = FourierFeatureEmbedding(input_dim, fourier_dim, fourier_scale)
+            current_dim = fourier_dim
+        else:
+            self.embedding = None
+            current_dim = input_dim
 
         # Build hidden layers
         for h in hidden_dims:
@@ -76,6 +103,8 @@ class FullyConnectedNN(nn.Module):
         self.model = nn.Sequential(*layers)
 
     def forward(self, x):
+        if self.embedding is not None:
+            x = self.embedding(x)
         return self.model(x)
 
     def _initialize_weights(self):

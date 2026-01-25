@@ -48,14 +48,13 @@ class ParticleTorch:
         self.softening = float(softening)
         self.current_time = torch.as_tensor(0.0, dtype=torch.float32, device=device)
         self.period = torch.as_tensor(0.0, dtype=torch.float32, device=device)
-        #self.current_time = 0.0
 
         # Optional analytic external field (e.g. tides) applied on top of N-body gravity.
         self.external_field: Optional[ExternalField] = None
 
     @classmethod
     def from_tensors(cls, mass, position, velocity,
-                     dt=0.0, softening=0.0):
+                     dt=0.0, softening=0.0, current_time=0.0, period=0.0):
         """
         Constructor for TRAINING: takes tensors and stores them directly
         without wrapping them in new tensors (keeps gradients intact).
@@ -76,7 +75,19 @@ class ParticleTorch:
         obj.dt   = torch.as_tensor(dt,   dtype=dtype, device=device)
 
         obj.softening = float(softening)
-        obj.current_time = 0.0
+        
+        # Handle current_time (scalar or tensor)
+        if torch.is_tensor(current_time):
+             obj.current_time = current_time.to(device=device, dtype=dtype)
+        else:
+             obj.current_time = torch.tensor(current_time, device=device, dtype=dtype)
+             
+        # Handle period (scalar or tensor)
+        if torch.is_tensor(period):
+             obj.period = period.to(device=device, dtype=dtype)
+        else:
+             obj.period = torch.tensor(period, device=device, dtype=dtype)
+
         obj.external_field = None
         return obj
 
@@ -94,10 +105,20 @@ class ParticleTorch:
         acc = self.acceleration.detach().clone()
         dt  = self.dt.detach().clone()
         mass = self.mass.detach().clone()
+        
+        # Clone time and period
+        curr_time = self.current_time
+        if torch.is_tensor(curr_time):
+             curr_time = curr_time.detach().clone()
+        
+        period = self.period
+        if torch.is_tensor(period):
+             period = period.detach().clone()
 
         cloned = ParticleTorch.from_tensors(
             mass=mass, position=pos, velocity=vel,
-            dt=dt, softening=self.softening
+            dt=dt, softening=self.softening,
+            current_time=curr_time, period=period
         )
         cloned.external_field = getattr(self, "external_field", None)
         return cloned
@@ -117,7 +138,11 @@ class ParticleTorch:
             self.dt = torch.as_tensor(dt, dtype=torch.float32,
                                       device=position.device)
 
-        self.current_time = 0.0
+        # Should we reset current_time? Usually yes for new episode.
+        if torch.is_tensor(self.current_time):
+            self.current_time.fill_(0.0)
+        else:
+            self.current_time = 0.0
 
     def get_acceleration(self, G=1.0):
         """
@@ -178,14 +203,6 @@ class ParticleTorch:
     def evolve(self, G=1.0):
         """
         One step of symplectic leapfrog / velocity-Verlet integration:
-
-        v_{n+1/2} = v_n + 0.5 * a(x_n) * dt
-        x_{n+1}   = x_n + v_{n+1/2} * dt
-        a_{n+1}   = a(x_{n+1})
-        v_{n+1}   = v_{n+1/2} + 0.5 * a_{n+1} * dt
-
-        Updates self.position, self.velocity, self.acceleration in place
-        (out-of-place tensor ops, so autograd is fine).
         """
         dt = self.dt
 
@@ -235,14 +252,9 @@ class ParticleTorch:
             dt = torch.tensor(dt, dtype=pos.dtype, device=pos.device)
 
         # Now ensure dt has at least as many dims as pos minus the last two (N, D)
-        # For batched case:
-        #   pos: (B, N, D), dt: (B,)  -> we reshape dt -> (B, 1, 1)
-        # For single case:
-        #   pos: (N, D), dt: ()       -> we keep it scalar, broadcasting works
         if dt.dim() == 1 and pos.dim() == 3:
             # (B,) -> (B, 1, 1)
             dt = dt.view(-1, 1, 1)
-        # If dt is 0-dim (scalar), broadcasting already works against (N,D) or (B,N,D)
 
         # ---- 1. Acceleration at current positions ----
         a_n = self.get_acceleration(G=G)  # same shape as pos
@@ -266,35 +278,28 @@ class ParticleTorch:
         self.acceleration = a_new
 
         # current_time is bookkeeping only, not part of the graph
-        # You can keep it scalar; for batched dt we just advance by the
-        # mean (or max) dt, depending on your convention.
-        dt_for_time = dt
-        if dt_for_time.dim() > 0:
-            dt_for_time = dt_for_time.mean()   # or .max()
-
-        # Make sure current_time is a tensor on same device
-        if not torch.is_tensor(self.current_time):
-            self.current_time = torch.tensor(
-                float(self.current_time),
-                dtype=pos.dtype,
-                device=pos.device,
-            )
-
-        self.current_time = self.current_time + dt_for_time.detach()
-
+        dt_detach = self.dt.detach() if torch.is_tensor(self.dt) else torch.tensor(self.dt, device=pos.device)
+        
+        # Handle vector time for independent batch items
+        if torch.is_tensor(self.current_time) and self.current_time.dim() > 0:
+            if dt_detach.dim() == 0:
+                dt_detach = dt_detach.expand_as(self.current_time)
+            elif dt_detach.dim() > 0 and dt_detach.numel() == self.current_time.numel():
+                dt_detach = dt_detach.view_as(self.current_time)
+            elif dt_detach.dim() > 0 and dt_detach.shape[0] == self.current_time.shape[0]:
+                 # e.g. dt is (B, 1, 1) -> (B,)
+                 dt_detach = dt_detach.view(self.current_time.shape)
+            
+            self.current_time = self.current_time + dt_detach
+        else:
+             # Scalar time
+             val = dt_detach
+             if val.dim() > 0:
+                 val = val.mean()
+             self.current_time = self.current_time + val
 
     def total_energy(self, G=1.0):
-        """
-        Total energy = Kinetic + Potential
-
-        K = 0.5 * m * v^2  (sum over particles)
-        U = - G * sum_{i < j} m_i m_j / sqrt(r_ij^2 + eps^2)
-
-        All operations are:
-          • differentiable
-          • GPU friendly
-          • batch friendly
-        """
+        # ... (unchanged)
         KE = self.kinetic_energy()
 
         pos = self.position  # (N, D)
@@ -335,8 +340,6 @@ class ParticleTorch:
         pot = -0.5 * G * (m_i * m_j * inv_dist).sum()
         self.KE = KE
         self.pot = pot
-
-        #print("KE =", KE, "PE =", pot)
 
         E = KE + pot
 
@@ -455,7 +458,7 @@ class ParticleTorch:
         self.position = self.position + self.velocity * self.dt
         self.current_time += float(self.dt.detach().cpu())
 
-    def system_features(self, G=1.0, mode: str = "basic"):
+    def system_features(self, G=1.0, mode: str = "basic", norm_scales: Optional[dict] = None):
         """
         Fixed-size, permutation-invariant features for an N-body system.
         mode="basic" or "rich".
@@ -467,6 +470,7 @@ class ParticleTorch:
             softening=self.softening,
             G=G,
             mode=mode,
+            norm_scales=norm_scales,
         )
 
     def features(self, G=1.0, mode: str = "basic"):
@@ -564,7 +568,25 @@ def stack_particles(particles):
     pos = torch.stack([p.position for p in particles], dim=0)   # (B, N, D)
     vel = torch.stack([p.velocity for p in particles], dim=0)   # (B, N, D)
     mass = torch.stack([p.mass for p in particles], dim=0)      # (B, N) or (B,)
-    out = ParticleTorch.from_tensors(mass=mass, position=pos, velocity=vel)
+    
+    # Handle current_time and period
+    # If they are scalars, stack them to (B,)
+    times = [p.current_time for p in particles]
+    periods = [p.period for p in particles]
+    
+    # Check if they are tensors
+    if all(torch.is_tensor(t) for t in times):
+         time_stack = torch.stack(times, dim=0)
+    else:
+         # Assuming they are all same device/dtype as pos
+         time_stack = torch.tensor(times, device=pos.device, dtype=pos.dtype)
+
+    if all(torch.is_tensor(p) for p in periods):
+         period_stack = torch.stack(periods, dim=0)
+    else:
+         period_stack = torch.tensor(periods, device=pos.device, dtype=pos.dtype)
+
+    out = ParticleTorch.from_tensors(mass=mass, position=pos, velocity=vel, current_time=time_stack, period=period_stack)
     fields = [getattr(p, "external_field", None) for p in particles]
     if len(fields) > 0 and all(f is fields[0] for f in fields):
         out.external_field = fields[0]

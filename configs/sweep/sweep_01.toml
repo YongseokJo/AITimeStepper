@@ -1,0 +1,35 @@
+save_name = "sweep_01"
+num_particles = 2
+history_len = 0
+feature_type = "delta_mag"
+normalize_inputs = true
+norm_mode = "auto"
+
+dtype = "float64"
+
+[train]
+epochs = 20000
+n_steps = 1
+energy_threshold = 5e-4
+steps_per_epoch = 1
+wandb = true
+retrain_log_every = 100
+max_retrain_steps = 1e6
+debug = true
+movie = true
+
+E_upper = 1e-4
+E_lower = 1e-6
+L_upper = 1e-5
+L_lower = 1e-7
+
+
+[simulate]
+use_train_ic = true
+multi_orbit_sim = false
+#num_orbits = 5
+integrator_mode = "ml"
+#Nperiod = 10
+steps = 20000
+movie = true
+movie_max_frames = -1

@@ -8,8 +8,8 @@
 #SBATCH --job-name=sim
 #SBATCH --time=02:00:00      # hh:mm:ss for the job
 #SBATCH --constraint="scratch"
-#SBATCH -e slurm-%j.err
-#SBATCH -o slurm-%j.out
+#SBATCH -e logs/slurm-%j.err
+#SBATCH -o logs/slurm-%j.out
 ###SBATCH --array=0-2 
 
 ### GPU options ###
@@ -52,3 +52,4 @@ echo "job is starting on `hostname`"
 MODEL_PATH="/u/gkerex/projects/AITimeStepper/data/test_history_logs/model/model_epoch_0250.pt"
 
 python run/runner.py simulate --integrator-mode history --model-path=$MODEL_PATH --history-len 5 --num-particles 4 --steps 500 --save-name="history_test_dL"
+
